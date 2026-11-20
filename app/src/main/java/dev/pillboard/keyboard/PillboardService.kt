@@ -78,8 +78,12 @@ class PillboardService : InputMethodService() {
     private var builtFx = true
     /** One glass drawable per built input view: its AGSL layer and light animation are reused across applyBlur() calls. */
     private var shell: GlassSurfaceDrawable? = null
+    /** Stage 4: edge refraction of the shell layer (API 33+, "Liquid refraction" setting). */
+    private var refraction: ShellRefraction? = null
 
     override fun onCreateInputView(): View {
+        refraction?.release()
+        refraction = null
         builtDynamic = Prefs.dynamic(this)
         builtSeed = Prefs.seedColor(this)
         builtFx = Prefs.bool(this, "glass_fx", true)
@@ -92,6 +96,7 @@ class PillboardService : InputMethodService() {
             clipToOutline = true
         }
         root = r
+        refraction = ShellRefraction(r, tokens.containerRadius)
         // Keep keys clear of the system navigation bar (fixes overlap on edge-to-edge Android 15+)
         ViewCompat.setOnApplyWindowInsetsListener(r) { _, insets ->
             navInset = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
@@ -142,6 +147,7 @@ class PillboardService : InputMethodService() {
             blurListener?.let { (getSystemService(WINDOW_SERVICE) as WindowManager).removeCrossWindowBlurEnabledListener(it) }
         }
         blurListener = null
+        refraction?.release(); refraction = null
         super.onDestroy()
     }
 
@@ -160,6 +166,8 @@ class PillboardService : InputMethodService() {
             blurRequested -> tokens.glassFillNoBlur
             else -> tokens.background
         }
+        // refraction re-samples the shell layer, so it is off for "high contrast text" like the blur
+        refraction?.update(Prefs.bool(this, "refract", true) && !highContrast)
         val glass = shell?.also { it.setFill(fill) } ?: tokens.shell(fill).also { shell = it }
         if (root?.background !== glass) root?.background = glass
         window.window?.let { w ->
@@ -200,20 +208,21 @@ class PillboardService : InputMethodService() {
             })
         }
         r.addView(rowOf {
-            key(if (symbols) "ABC" else "?123", keyH, 1.35f, KeyStyle.SPECIAL) { symbols = !symbols; render(animateRows = true) }
+            key(if (symbols) "ABC" else "123", keyH, 1.35f, KeyStyle.SPECIAL) { symbols = !symbols; render(animateRows = true) }
             key(",", keyH, 0.85f, KeyStyle.SPECIAL) { type(",") }
             key("space", keyH, 4.45f, KeyStyle.SPECIAL) { space() }
             key(".", keyH, 0.85f, KeyStyle.SPECIAL) { type(".") }
             val action = currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: 0
-            val (name, ico) = when (action) {
-                EditorInfo.IME_ACTION_GO -> "Go" to R.drawable.ic_arrow_forward
-                EditorInfo.IME_ACTION_SEARCH -> "Search" to R.drawable.ic_search
-                EditorInfo.IME_ACTION_SEND -> "Send" to R.drawable.ic_send
-                EditorInfo.IME_ACTION_DONE -> "Done" to R.drawable.ic_check
-                EditorInfo.IME_ACTION_NEXT -> "Next" to R.drawable.ic_arrow_forward
-                else -> "Enter" to R.drawable.ic_enter
+            // iOS: the action key is a word, not an icon ("return" in lowercase, the editor actions capitalised)
+            val name = when (action) {
+                EditorInfo.IME_ACTION_GO -> "Go"
+                EditorInfo.IME_ACTION_SEARCH -> "Search"
+                EditorInfo.IME_ACTION_SEND -> "Send"
+                EditorInfo.IME_ACTION_DONE -> "Done"
+                EditorInfo.IME_ACTION_NEXT -> "Next"
+                else -> "return"
             }
-            key(name, keyH, 1.5f, KeyStyle.ACCENT, icon = ico) { enter() }   // Enter is always the primary action
+            key(name, keyH, 1.5f, KeyStyle.ACCENT) { enter() }   // always the primary action
         })
         updateStrip()
         if (animateRows && animationsOn(this)) {
@@ -286,8 +295,8 @@ class PillboardService : InputMethodService() {
         }
     }
 
-    /** OFF = tonal special key, ON = inverted (one capital), LOCK = accent. Each state is visibly distinct. */
-    private fun shiftStyle() = when (shift) { Shift.OFF -> KeyStyle.SPECIAL; Shift.ON -> KeyStyle.ACTIVE; Shift.LOCK -> KeyStyle.ACCENT }
+    /** iOS: OFF = tonal special key, ON and LOCK = inverted key; LOCK is told apart by the underlined arrow icon. */
+    private fun shiftStyle() = when (shift) { Shift.OFF -> KeyStyle.SPECIAL; Shift.ON, Shift.LOCK -> KeyStyle.ACTIVE }
 
     private fun shiftIcon() = when (shift) {
         Shift.OFF -> R.drawable.ic_shift; Shift.ON -> R.drawable.ic_shift_on; Shift.LOCK -> R.drawable.ic_caps_lock
@@ -359,9 +368,11 @@ class PillboardService : InputMethodService() {
             if (tv.tag != nextText) {
                 tv.tag = nextText
                 tv.animate().cancel()
-                tv.animate().alpha(0.45f).translationY(3.dp.toFloat()).setDuration(70).withEndAction {
+                if (!animationsOn(this)) { tv.text = nextText; tv.alpha = 1f; tv.translationY = 0f }
+                else tv.animate().alpha(0f).translationY((-3).dp.toFloat()).setDuration(60).withEndAction {
                     tv.text = tv.tag as? String ?: ""
-                    tv.animate().alpha(1f).translationY(0f).setDuration(150).start()
+                    tv.translationY = 5.dp.toFloat()
+                    tv.animate().alpha(1f).translationY(0f).setDuration(tokens.flowMs).setInterpolator(tokens.flowSpring).start()
                 }.start()
             }
             tv.setOnClickListener(if (sug == null) null else View.OnClickListener {

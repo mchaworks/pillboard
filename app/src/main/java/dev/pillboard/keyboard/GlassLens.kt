@@ -159,6 +159,10 @@ class LensView(ctx: Context, private val t: KbTokens) : View(ctx) {
     private val rect = RectF()
     private val density = ctx.resources.displayMetrics.density
 
+    /** 0 = just left the key (no magnification), 1 = fully formed; driven by the preview's spring. */
+    var morph = 1f
+        set(v) { if (field != v) { field = v; invalidate() } }
+
     /** Point the lens at [key]; the keyboard window ([View.getRootView]) is what gets recorded and refracted. */
     fun aim(key: View, g: String) {
         val loc = IntArray(2)
@@ -177,7 +181,7 @@ class LensView(ctx: Context, private val t: KbTokens) : View(ctx) {
         val s = source
         val r = minOf(t.popupRadius, height / 2f)
         if (l != null && s != null && Build.VERSION.SDK_INT >= 33 && canvas.isHardwareAccelerated && width > 0 && height > 0) {
-            l.draw(canvas, s, width, height, cx, cy, MAG, r, density, tint)
+            l.draw(canvas, s, width, height, cx, cy, 1f + (MAG - 1f) * morph.coerceIn(0f, 1.25f), r, density, tint)
         } else {
             tile.color = t.popupFill
             rect.set(0f, 0f, width.toFloat(), height.toFloat())

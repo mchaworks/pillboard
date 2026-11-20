@@ -33,6 +33,10 @@ internal object GlassShader {
         uniform float2 lightDir;
         uniform float intensity;
         uniform float pool;
+        uniform float gloss;
+        uniform float2 touch;
+        uniform float touchAmt;
+        uniform float touchGlow;
 
         float sdRoundRect(float2 p, float2 halfSize, float r) {
             float2 q = abs(p) - halfSize + float2(r, r);
@@ -78,8 +82,18 @@ internal object GlassShader {
             float tx = fragCoord.x / resolution.x - (0.5 + lightDir.x * 0.5);
             float soft = (1.0 - smoothstep(0.0, 0.5, ty)) * (1.0 - clamp(abs(tx) * 1.4, 0.0, 1.0)) * pool;
 
+            // reflection: a broad diagonal gloss streak across the shell that slides with the light, plus a fainter twin
+            float2 q = fragCoord / resolution;
+            float k1 = q.x * 0.85 + q.y * 0.55 - (0.50 + lightDir.x * 0.30);
+            float k2 = q.x * 0.85 + q.y * 0.55 - (0.96 + lightDir.x * 0.30);
+            float sheen = (exp(-k1 * k1 / 0.010) + 0.45 * exp(-k2 * k2 / 0.004)) * gloss;
+
+            // the pressed key lights the glass around it (visible in the gaps between keys)
+            float2 dt = (fragCoord - touch) / (86.0 * dpx);
+            float lit = exp(-dot(dt, dt)) * touchAmt * touchGlow;
+
             float3 rgb = (hair * (0.70 * lobes) + float3(glow * 0.10, glow * 0.10, glow * 0.10)) * intensity
-                + float3(soft, soft, soft);
+                + float3(soft + sheen + lit, soft + sheen + lit, soft + sheen + lit);
             rgb = clamp(rgb, 0.0, 1.0) * cov;
             float a = max(max(rgb.x, rgb.y), rgb.z);
             return half4(half(rgb.x), half(rgb.y), half(rgb.z), half(a));
@@ -104,14 +118,19 @@ internal class GlassShaderLayer {
     private val shader = RuntimeShader(GlassShader.SRC)
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).also { it.shader = shader }
 
-    fun draw(canvas: Canvas, rect: RectF, radius: Float, density: Float, night: Boolean, lightX: Float, lightY: Float) {
+    fun draw(canvas: Canvas, rect: RectF, radius: Float, density: Float, night: Boolean, lightX: Float, lightY: Float,
+             touchX: Float, touchY: Float, touchAmt: Float) {
         val len = kotlin.math.sqrt(lightX * lightX + lightY * lightY)
         shader.setFloatUniform("resolution", rect.width(), rect.height())
         shader.setFloatUniform("radius", radius)
         shader.setFloatUniform("dpx", density)
         shader.setFloatUniform("lightDir", lightX / len, lightY / len)
-        shader.setFloatUniform("intensity", if (night) 0.55f else 0.85f)
+        shader.setFloatUniform("intensity", if (night) 0.70f else 0.90f)
         shader.setFloatUniform("pool", if (night) 0.05f else 0.16f)
+        shader.setFloatUniform("gloss", if (night) 0.065f else 0.20f)
+        shader.setFloatUniform("touch", touchX, touchY)
+        shader.setFloatUniform("touchAmt", touchAmt)
+        shader.setFloatUniform("touchGlow", if (night) 0.14f else 0.30f)
         canvas.drawRoundRect(rect, radius, radius, paint)
     }
 }
@@ -139,6 +158,7 @@ class GlassSurfaceDrawable(
     private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1.dp.toFloat() }
     private val rimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1.2f * density() }
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val sheenPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private var shader: GlassShaderLayer? = null
     private var shaderTried = false
     private var w = 0
@@ -148,6 +168,10 @@ class GlassSurfaceDrawable(
     // light direction (unit vector pointing toward the light); x follows the last press
     private var lightX = DEFAULT_LIGHT_X
     private var light: ValueAnimator? = null
+    // press glow: where the last key was pressed (shell pixels) and how strongly it currently lights the glass
+    private var touchX = 0f
+    private var touchY = 0f
+    private var touchAmt = 0f
 
     private companion object {
         const val DEFAULT_LIGHT_X = -0.866f
@@ -162,19 +186,29 @@ class GlassSurfaceDrawable(
     val shaderActive get() = shader != null
 
     /**
-     * Lean the light toward a press at [fraction] (0..1 across the shell) and ease back to the resting direction
-     * on release. No-op unless the AGSL layer is active, so the fallback path never animates or invalidates.
+     * Lean the light toward a press at ([px], [py]) in shell pixels and light the glass around it; null eases both
+     * back to rest. No-op unless the AGSL layer is active, so the fallback path never animates or invalidates.
      */
-    fun leanLight(fraction: Float?, animate: Boolean) {
+    fun leanLight(px: Float?, py: Float?, animate: Boolean) {
         if (shader == null) return
-        val target = if (fraction == null) DEFAULT_LIGHT_X else DEFAULT_LIGHT_X + (fraction.coerceIn(0f, 1f) - 0.5f) * 2f * LIGHT_SWAY
+        val down = px != null && py != null && w > 0
+        val frac = if (down) (px!! / w).coerceIn(0f, 1f) else 0.5f
+        val targetX = DEFAULT_LIGHT_X + (frac - 0.5f) * 2f * LIGHT_SWAY
+        val targetAmt = if (down) 1f else 0f
+        if (down) { touchX = px!!; touchY = py!! }       // on release the glow fades where it was
         light?.cancel()
-        if (!animate) { lightX = target; invalidateSelf(); return }
-        val from = lightX
-        light = ValueAnimator.ofFloat(from, target).apply {
-            duration = if (fraction == null) 520L else 200L
+        val fromX = lightX
+        val fromAmt = touchAmt
+        if (!animate) { lightX = targetX; touchAmt = targetAmt; invalidateSelf(); return }
+        light = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = if (down) 200L else 520L
             interpolator = DecelerateInterpolator()
-            addUpdateListener { lightX = it.animatedValue as Float; invalidateSelf() }
+            addUpdateListener {
+                val f = it.animatedFraction
+                lightX = fromX + (targetX - fromX) * f
+                touchAmt = fromAmt + (targetAmt - fromAmt) * f
+                invalidateSelf()
+            }
             start()
         }
     }
@@ -207,6 +241,10 @@ class GlassSurfaceDrawable(
         val hi = t.glassHighlight
         val lo = ColorUtils.setAlphaComponent(hi, Color.alpha(hi) * 3 / 4)
         val mid = ColorUtils.setAlphaComponent(hi, 0)
+        val sheen = ColorUtils.setAlphaComponent(Color.WHITE, if (t.night) 0x14 else 0x3C)
+        val clear = ColorUtils.setAlphaComponent(Color.WHITE, 0)
+        sheenPaint.shader = LinearGradient(0f, 0f, w * 0.85f, h * 0.55f * 1.6f,
+            intArrayOf(clear, clear, sheen, clear, clear), floatArrayOf(0f, 0.30f, 0.5f, 0.70f, 1f), Shader.TileMode.CLAMP)
         rimPaint.shader = LinearGradient(0f, 0f, w.toFloat(), h.toFloat(),
             intArrayOf(hi, mid, mid, lo), floatArrayOf(0f, 0.32f, 0.72f, 1f), Shader.TileMode.CLAMP)
     }
@@ -232,7 +270,7 @@ class GlassSurfaceDrawable(
 
         val s = shader
         if (s != null && Build.VERSION.SDK_INT >= 33 && canvas.isHardwareAccelerated) {
-            s.draw(canvas, rect, radius, density(), t.night, lightX, LIGHT_Y)
+            s.draw(canvas, rect, radius, density(), t.night, lightX, LIGHT_Y, touchX, touchY, touchAmt)
         } else {
             // soft light falling on the upper part of the shell, clipped to the rounded top
             val glowH = minOf(h * 0.55f, 96.dp.toFloat())
@@ -240,6 +278,7 @@ class GlassSurfaceDrawable(
             canvas.clipRect(0f, 0f, w.toFloat(), glowH)
             canvas.drawRoundRect(inner, radius - 1f, radius - 1f, glowPaint)
             canvas.restoreToCount(c2)
+            if (style == Style.SHELL) canvas.drawRoundRect(inner, radius - 1f, radius - 1f, sheenPaint)   // fallback reflection streak
             canvas.drawRoundRect(inner, radius - 1f, radius - 1f, rimPaint)
         }
 

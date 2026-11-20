@@ -47,6 +47,12 @@ class KbTokens(private val ctx: Context) {
     val releaseMs = spring.settleMs    // ~340ms
     val morphMs = 180L                 // shape/tone change (Shift states)
     val radiusReleaseMs = 140L         // corner morph back after a press
+    /** Preview bubble: a quicker, slightly firmer spring so it springs out of the key rather than fading in. */
+    val popSpring = SpringInterpolator(0.70f, 30f)
+    val popMs = popSpring.settleMs
+    /** Suggestion words changing: gentle spring settle. */
+    val flowSpring = SpringInterpolator(0.78f, 28f)
+    val flowMs = flowSpring.settleMs
     val popupInMs = 100L
     val fadeOutMs = 70L
     val rowInMs = 140L                 // ?123 <-> ABC page change

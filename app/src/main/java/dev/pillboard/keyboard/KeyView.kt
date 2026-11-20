@@ -20,6 +20,7 @@ import android.widget.LinearLayout
 import android.widget.PopupWindow
 import android.widget.TextView
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.ColorUtils
 
 val Int.dp: Int get() = (this * Resources.getSystem().displayMetrics.density).toInt()
 
@@ -44,6 +45,25 @@ private fun popIn(bubble: View, w: Int, h: Int, ms: Long, on: Boolean) {
     bubble.pivotX = w / 2f; bubble.pivotY = h.toFloat()
     bubble.alpha = 0f; bubble.scaleX = 0.86f; bubble.scaleY = 0.86f
     bubble.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(ms).setInterpolator(DecelerateInterpolator()).start()
+}
+
+/**
+ * Stage 5: the preview grows out of the pressed key. It starts at the key's own size, pinned to its bottom edge,
+ * and springs up to the bubble size (a small overshoot is the liquid pop). [LensView] also eases its magnification
+ * with the same progress, so the lens "fills" as it rises.
+ */
+private fun morphFromKey(face: View, lens: LensView?, bw: Int, bh: Int, kw: Int, kh: Int, t: KbTokens, on: Boolean) {
+    face.animate().cancel()
+    if (!on) { face.alpha = 1f; face.scaleX = 1f; face.scaleY = 1f; lens?.morph = 1f; return }
+    face.pivotX = bw / 2f; face.pivotY = bh.toFloat()
+    face.alpha = 0f
+    face.scaleX = (kw.toFloat() / bw).coerceIn(0.5f, 1f)
+    face.scaleY = (kh.toFloat() / bh).coerceIn(0.5f, 1f)
+    lens?.morph = 0f
+    face.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(t.popMs).setInterpolator(t.popSpring)
+        .setUpdateListener { lens?.morph = it.animatedFraction.coerceIn(0f, 1f) }
+        .withEndAction { lens?.morph = 1f }
+        .start()
 }
 
 /**
@@ -88,12 +108,12 @@ class KeyPreview(ctx: Context, private val t: KbTokens) {
         face.animate().cancel()
         if (p.isShowing) {
             p.update(x, y, ww, wh)
-            if (wasSolid) { face.alpha = 1f; face.scaleX = 1f; face.scaleY = 1f }
-            else popIn(face, bw, bh, t.popupInMs, motionOn)
+            if (wasSolid) { face.alpha = 1f; face.scaleX = 1f; face.scaleY = 1f; lens?.morph = 1f }
+            else morphFromKey(face, lens, bw, bh, key.width, key.height, t, motionOn)
         } else {
             p.width = ww; p.height = wh
             p.showAtLocation(key, Gravity.NO_GRAVITY, x, y)
-            popIn(face, bw, bh, t.popupInMs, motionOn)
+            morphFromKey(face, lens, bw, bh, key.width, key.height, t, motionOn)
         }
     }
 
@@ -107,7 +127,7 @@ class KeyPreview(ctx: Context, private val t: KbTokens) {
         val p = popup ?: return
         if (immediate || !motionOn || !p.isShowing) { fading = false; p.dismiss(); return }
         fading = true
-        face.animate().alpha(0f).setDuration(t.fadeOutMs).withEndAction {
+        face.animate().setUpdateListener(null).alpha(0f).setDuration(t.fadeOutMs).withEndAction {
             if (fading) { fading = false; p.dismiss() }
         }.start()
     }
@@ -152,6 +172,10 @@ class KeyView(
     private var morph: ValueAnimator? = null
     private val argb = ArgbEvaluator()
     private val shape = GradientDrawable()
+    // organic shape: four independent corner radii (TL, TR, BR, BL); the GradientDrawable only ever sees `radii`
+    private val corner = FloatArray(4)
+    private val cFrom = FloatArray(4)
+    private val radii = FloatArray(8)
     private val motionOn = animationsOn(context)
 
     private var pendingUp = false
@@ -171,7 +195,7 @@ class KeyView(
         text = label
         contentDescription = label
         gravity = Gravity.CENTER
-        textSize = if (label.length == 1 && style != KeyStyle.ACCENT) 22f else 14f
+        textSize = when { label.length == 1 && style != KeyStyle.ACCENT -> 22f; style == KeyStyle.ACCENT -> 16f; else -> 15f }
         applyStyle(style)
         background = shape
         elevation = t.keyElevation
@@ -186,7 +210,7 @@ class KeyView(
 
     private fun applyStyle(style: KeyStyle, animate: Boolean = false) {
         val oldColors = restColors
-        val oldRadius = shape.cornerRadius
+        System.arraycopy(corner, 0, cFrom, 0, 4)
         currentStyle = style
         when (style) {
             KeyStyle.LETTER -> { fill = t.key; ink = t.keyText }
@@ -194,53 +218,102 @@ class KeyView(
             KeyStyle.ACCENT -> { fill = t.accent; ink = t.onAccent }
             KeyStyle.ACTIVE -> { fill = t.keyText; ink = t.key }
         }
-        pressedFill = if (style == KeyStyle.ACCENT) t.accentPressed else t.pressed
-        pressedInk = if (style == KeyStyle.ACCENT) t.onAccent else t.pressedText
+        // iOS: special keys flip to the letter-key tone while pressed; the inverted Shift dims a little
+        pressedFill = when (style) {
+            KeyStyle.ACCENT -> t.accentPressed
+            KeyStyle.SPECIAL -> t.key
+            KeyStyle.ACTIVE -> ColorUtils.blendARGB(t.keyText, t.key, 0.22f)
+            KeyStyle.LETTER -> t.pressed
+        }
+        pressedInk = when (style) {
+            KeyStyle.ACCENT -> t.onAccent
+            KeyStyle.ACTIVE -> ink
+            else -> t.pressedText
+        }
         rest = radiusFor(style)
         restColors = t.sheen(fill)          // cached: no allocation on every release
         downColors[0] = pressedFill; downColors[1] = pressedFill
         morph?.cancel()
         paint(false)
-        shape.cornerRadius = rest
+        setCorners(rest)
         setTextColor(ink)
         icon?.setTint(ink)
-        if (animate && motionOn && isAttachedToWindow && width > 0) morphFrom(oldColors, oldRadius)
+        if (animate && motionOn && isAttachedToWindow && width > 0) morphFrom(oldColors)
         invalidate()
     }
 
-    /** Organic style change (e.g. Shift): tone and corner radius flow to the new state instead of snapping. */
-    private fun morphFrom(oldColors: IntArray, oldRadius: Float) {
+    private fun setCorners(a: Float, b: Float, c: Float, d: Float) {
+        corner[0] = a; corner[1] = b; corner[2] = c; corner[3] = d
+        applyCorners()
+    }
+
+    private fun setCorners(r: Float) = setCorners(r, r, r, r)
+
+    private fun applyCorners() {
+        for (i in 0..3) { val r = corner[i].coerceAtLeast(0f); radii[i * 2] = r; radii[i * 2 + 1] = r }
+        shape.setCornerRadii(radii)
+    }
+
+    /**
+     * Organic style change (e.g. Shift): tone and every corner flow from where they are to the new state on the
+     * spring instead of snapping. Colour is clamped to 0..1 (the spring overshoots; ArgbEvaluator would overflow
+     * the channels), corners are allowed to overshoot, which is what makes the shape feel alive.
+     */
+    private fun morphFrom(oldColors: IntArray) {
         val newColors = restColors
-        shape.setColors(oldColors); shape.cornerRadius = oldRadius
+        shape.setColors(oldColors)
+        setCorners(cFrom[0], cFrom[1], cFrom[2], cFrom[3])
         morph = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = t.morphMs
+            duration = t.releaseMs
             interpolator = t.spring
             addUpdateListener {
                 val f = it.animatedFraction
+                val fc = f.coerceIn(0f, 1f)
                 shape.setColors(intArrayOf(
-                    argb.evaluate(f, oldColors[0], newColors[0]) as Int,
-                    argb.evaluate(f, oldColors[1], newColors[1]) as Int))
-                shape.cornerRadius = oldRadius + (rest - oldRadius) * f
+                    argb.evaluate(fc, oldColors[0], newColors[0]) as Int,
+                    argb.evaluate(fc, oldColors[1], newColors[1]) as Int))
+                for (i in 0..3) corner[i] = cFrom[i] + (rest - cFrom[i]) * f
+                applyCorners()
             }
             start()
         }
     }
 
-    private fun morphRadius(to: Float, ms: Long) {
+    /** Spring all four corners back to [rest]: a small undershoot, then settle (the release half of the morph). */
+    private fun springCorners() {
         morph?.cancel()
-        val from = shape.cornerRadius
-        if (!motionOn || ms == 0L || from == to) { shape.cornerRadius = to; return }
-        morph = ValueAnimator.ofFloat(from, to).apply {
-            duration = ms
-            interpolator = android.view.animation.DecelerateInterpolator()
-            addUpdateListener { shape.cornerRadius = it.animatedValue as Float }
+        System.arraycopy(corner, 0, cFrom, 0, 4)
+        if (!motionOn) { setCorners(rest); return }
+        morph = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = t.releaseMs
+            interpolator = t.spring
+            addUpdateListener {
+                val f = it.animatedFraction
+                for (i in 0..3) corner[i] = cFrom[i] + (rest - cFrom[i]) * f
+                applyCorners()
+            }
             start()
         }
     }
 
-    private fun paint(down: Boolean) {
+    /**
+     * Pressed shape: the corners nearest the finger swell, the far ones tighten, so the key reads as a soft body
+     * pressed at that point. ([tx], [ty]) is the touch in view pixels; the average radius stays rest + boost.
+     */
+    private fun pressedCorners(tx: Float, ty: Float) {
+        val nx = if (width > 0) (tx / width * 2f - 1f).coerceIn(-1f, 1f) else 0f
+        val ny = if (height > 0) (ty / height * 2f - 1f).coerceIn(-1f, 1f) else 0f
+        val boost = t.pressRadiusBoost.toFloat()
+        fun at(sx: Float, sy: Float): Float {
+            val p = (1f + sx * nx) / 2f * ((1f + sy * ny) / 2f)       // 0 far .. 1 near (0.25 at the centre)
+            return rest + boost * (1f + 1.2f * (p - 0.25f) / 0.75f)
+        }
+        setCorners(at(-1f, -1f), at(1f, -1f), at(1f, 1f), at(-1f, 1f))
+    }
+
+    private fun paint(down: Boolean, tx: Float = width / 2f, ty: Float = height / 2f) {
         shape.setColors(if (down) downColors else restColors)
-        if (down) shape.cornerRadius = rest + t.pressRadiusBoost   // release morphs back via morphRadius()
+        if (down) pressedCorners(tx, ty)     // release springs back via springCorners()
         shape.setStroke(0, Color.TRANSPARENT)   // flat keycaps: no outline
     }
 
@@ -267,18 +340,20 @@ class KeyView(
         d.draw(canvas)
     }
 
-    private fun animateTo(down: Boolean) {
+    private fun animateTo(down: Boolean, tx: Float = width / 2f, ty: Float = height / 2f) {
         // Color first, instantly: input never waits on animation.
         morph?.cancel()
-        paint(down)
-        if (!down) morphRadius(rest, t.radiusReleaseMs)
+        paint(down, tx, ty)
+        if (!down) springCorners()
         setTextColor(if (down) pressedInk else ink)
         icon?.setTint(if (down) pressedInk else ink)
         invalidate()
-        val sc = if (down) t.pressScale else 1f
+        // shrink by a fixed ~4dp per axis (not a percentage), so wide keys such as space don't lose a lot of width
+        val sx = if (down) (1f - 4.dp.toFloat() / width.coerceAtLeast(1)).coerceIn(0.9f, 0.99f) else 1f
+        val sy = if (down) (1f - 4.dp.toFloat() / height.coerceAtLeast(1)).coerceIn(0.9f, 0.99f) else 1f
         animate().cancel()
-        if (!motionOn) { scaleX = sc; scaleY = sc; return }
-        animate().scaleX(sc).scaleY(sc).setDuration(if (down) t.pressMs else t.releaseMs)
+        if (!motionOn) { scaleX = sx; scaleY = sy; return }
+        animate().scaleX(sx).scaleY(sy).setDuration(if (down) t.pressMs else t.releaseMs)
             .setInterpolator(if (down) null else t.spring).start()
     }
 
@@ -334,15 +409,18 @@ class KeyView(
         altViews = emptyList()
     }
 
-    /** After input and key feedback: ease the shell's specular light toward this key (down) or back to rest (up). */
+    /** After input and key feedback: lean the shell's light toward this key and light the glass around it (down), or ease back (up). */
     private fun leanGlass(down: Boolean) {
         val g = glass ?: return
         if (!g.shaderActive) return
-        if (!down) { g.leanLight(null, motionOn); return }
-        val ww = rootView.width
-        if (ww <= 0) return
-        val loc = IntArray(2); getLocationInWindow(loc)
-        g.leanLight((loc[0] + width / 2f) / ww, motionOn)
+        if (!down) { g.leanLight(null, null, motionOn); return }
+        // the shell is the ancestor that draws this glass; measure the key centre in its coordinates
+        var shellView: View? = parent as? View
+        while (shellView != null && shellView.background !== g) shellView = shellView.parent as? View
+        val sv = shellView ?: return
+        val k = IntArray(2); getLocationInWindow(k)
+        val o = IntArray(2); sv.getLocationInWindow(o)
+        g.leanLight(k[0] - o[0] + width / 2f, k[1] - o[1] + height / 2f, motionOn)
     }
 
     private fun previewable() = icon == null && !repeats && text.length == 1 && !text[0].isWhitespace()
@@ -359,7 +437,7 @@ class KeyView(
                     if (alts.isEmpty()) onKey() else { pendingUp = true; postDelayed(longPress, 350) }
                 }
                 // 2) then feedback
-                animateTo(true)
+                animateTo(true, e.x, e.y)
                 if (Prefs.bool(context, "haptic", true)) performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                 if (previewable()) preview?.show(this, text.toString())
                 leanGlass(true)

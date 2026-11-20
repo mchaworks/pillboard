@@ -84,6 +84,11 @@ class SettingsActivity : Activity() {
                     if (Build.VERSION.SDK_INT >= 33) "Shader-lit glass edge; the light leans toward your touch" else "Needs Android 13+, using gradient edge light",
                     "glass_fx", true, enabled = Build.VERSION.SDK_INT >= 33, onChange = { refreshPreview() })
             },
+            Item(Page.APPEARANCE, "Liquid refraction", "glass refraction edge bevel dispersion bend background shell") {
+                ui.toggle("Liquid refraction",
+                    if (Build.VERSION.SDK_INT >= 33) "The glass edge bends the keys near it, with a faint color fringe" else "Needs Android 13+",
+                    "refract", true, enabled = Build.VERSION.SDK_INT >= 33, onChange = { refreshPreview() })
+            },
             Item(Page.APPEARANCE, "Liquid lens", "refraction lens magnifier key preview glass") {
                 ui.toggle("Liquid lens",
                     if (Build.VERSION.SDK_INT >= 33) "Key preview refracts the keys around it" else "Needs Android 13+, using the plain bubble",
@@ -292,6 +297,8 @@ class SettingsActivity : Activity() {
             setPadding(5.dp, 6.dp, 5.dp, 6.dp)
             background = t.shell()
         }
+        // same refraction as the real keyboard, so the toggle is visible right here
+        if (Build.VERSION.SDK_INT >= 33) ShellRefraction(card, t.containerRadius).update(Prefs.bool(this, "refract", true))
         if (Prefs.bool(this, "suggest", true)) {
             card.addView(LinearLayout(this).apply {
                 isBaselineAligned = false
@@ -322,8 +329,8 @@ class SettingsActivity : Activity() {
         card.addView(row(letters("asdfghjkl")))
         card.addView(row(listOf(K("Shift", 1.5f, KeyStyle.SPECIAL, R.drawable.ic_shift)) + letters("zxcvbnm") +
             K("Backspace", 1.5f, KeyStyle.SPECIAL, R.drawable.ic_backspace)))
-        card.addView(row(listOf(K("?123", 1.35f, KeyStyle.SPECIAL), K(",", 0.85f, KeyStyle.SPECIAL), K("space", 4.45f, KeyStyle.SPECIAL),
-            K(".", 0.85f, KeyStyle.SPECIAL), K("Enter", 1.5f, KeyStyle.ACCENT, R.drawable.ic_enter))))
+        card.addView(row(listOf(K("123", 1.35f, KeyStyle.SPECIAL), K(",", 0.85f, KeyStyle.SPECIAL), K("space", 4.45f, KeyStyle.SPECIAL),
+            K(".", 0.85f, KeyStyle.SPECIAL), K("return", 1.5f, KeyStyle.ACCENT))))
         holder.addView(card, LinearLayout.LayoutParams(-1, -2))
     }
 }
