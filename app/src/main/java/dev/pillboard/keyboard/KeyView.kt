@@ -64,8 +64,17 @@ class KeyView(
         applyStyle(style)
         textSize = if (label.length == 1 && style != KeyStyle.ACCENT) 22f else 15f
         shape.cornerRadius = restRadius
+        shape.setStroke(1.dp, t.keyStroke)
         background = shape
-        elevation = 0f
+        elevation = 1.2f * resources.displayMetrics.density
+        if (label == "backspace") {
+            text = ""
+            val icon = androidx.core.content.ContextCompat.getDrawable(context, R.drawable.ic_backspace)
+            icon?.setTint(ink)
+            setCompoundDrawablesWithIntrinsicBounds(null, icon, null, null)
+            compoundDrawablePadding = 0
+            contentDescription = "Backspace"
+        }
     }
 
     private fun applyStyle(style: KeyStyle) {
@@ -78,7 +87,9 @@ class KeyView(
         pressedFill = t.pressed
         pressedInk = t.pressedText
         shape.setColor(fill)
+        shape.setStroke(1.dp, if (style == KeyStyle.LETTER) t.keyStroke else t.glassStroke)
         setTextColor(ink)
+        compoundDrawables.getOrNull(1)?.setTint(ink)
     }
 
     /** Update in place (no view rebuild), e.g. when Shift changes. */
@@ -89,11 +100,14 @@ class KeyView(
         // Color first, instantly: input never waits on animation.
         shape.setColor(if (down) pressedFill else fill)
         setTextColor(if (down) pressedInk else ink)
-        val sc = if (down) 0.95f else 1f
+        compoundDrawables.getOrNull(1)?.setTint(if (down) pressedInk else ink)
+        val sc = if (down) 0.94f else 1f
+        shape.cornerRadius = if (down) restRadius + 3.dp else restRadius
+        shape.setStroke(1.dp, if (down) t.glassHighlight else t.keyStroke)
         animate().cancel()
         if (!motionOn) { scaleX = sc; scaleY = sc; return }
-        animate().scaleX(sc).scaleY(sc).setDuration(if (down) 70 else 200)
-            .setInterpolator(if (down) null else OvershootInterpolator(2.5f)).start()
+        animate().scaleX(sc).scaleY(sc).setDuration(if (down) 65 else 230)
+            .setInterpolator(if (down) null else OvershootInterpolator(1.7f)).start()
     }
 
     // ---- long-press alternates ----
@@ -105,7 +119,11 @@ class KeyView(
         val itemH = 52.dp
         val pad = 6.dp
         val box = LinearLayout(context).apply {
-            background = GradientDrawable().apply { setColor(t.special); cornerRadius = 14.dp.toFloat() }
+            background = GradientDrawable().apply {
+                setColor(t.glassFill)
+                cornerRadius = 18.dp.toFloat()
+                setStroke(1.dp, t.glassStroke)
+            }
             setPadding(pad, pad, pad, pad)
             items.forEach { addView(it, LinearLayout.LayoutParams(itemW, itemH)) }
         }
@@ -119,7 +137,7 @@ class KeyView(
         altIdx = 0
         popup = PopupWindow(box, total, itemH + pad * 2, false).apply {
             isTouchable = false
-            elevation = 4.dp.toFloat()
+            elevation = 12.dp.toFloat()
             showAtLocation(this@KeyView, Gravity.NO_GRAVITY, x, y)
         }
         highlight()
@@ -129,7 +147,10 @@ class KeyView(
     private fun highlight() {
         altViews.forEachIndexed { i, v ->
             val on = i == altIdx
-            v.background = if (on) GradientDrawable().apply { setColor(t.accent); cornerRadius = 10.dp.toFloat() } else null
+            v.background = if (on) GradientDrawable().apply {
+                setColor(t.accent); cornerRadius = 13.dp.toFloat()
+                setStroke(1.dp, t.glassHighlight)
+            } else null
             v.setTextColor(if (on) t.onAccent else t.specialText)
         }
     }

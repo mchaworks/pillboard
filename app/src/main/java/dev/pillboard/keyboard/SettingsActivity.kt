@@ -65,7 +65,9 @@ class SettingsActivity : Activity() {
             },
             Item(Page.APPEARANCE, "Accent color", "palette preset", visible = { !Prefs.dynamic(this) }) { ui.accent { refreshPreview() } },
             Item(Page.APPEARANCE, "Blur background", "frosted glass") {
-                ui.toggle("Blur background", if (blurOk) "Frosted glass behind the keyboard" else "Not available on this device", "blur", false, enabled = blurOk)
+                ui.toggle("Blur background",
+                    if (blurOk) "Liquid Glass backdrop blur" else "Glass tint fallback; system blur unavailable",
+                    "blur", false, enabled = true)
             },
             Item(Page.APPEARANCE, "Key height", "size tall short dp") {
                 ui.slider("Key height", 42, 62, "key_h", 50, listOf("Short" to 44, "Standard" to 50, "Tall" to 58)) { refreshPreview() }
@@ -256,7 +258,11 @@ class SettingsActivity : Activity() {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(4.dp, 5.dp, 4.dp, 5.dp)
-            background = GradientDrawable().apply { setColor(t.background); cornerRadius = 22.dp.toFloat() }
+            background = GradientDrawable().apply {
+                setColor(t.glassFill)
+                cornerRadius = 26.dp.toFloat()
+                setStroke(1.dp, t.glassStroke)
+            }
         }
         fun row(keys: List<Pair<String, Float>>, special: Set<String> = emptySet()) = LinearLayout(this).apply {
             keys.forEach { (k, w) ->
@@ -267,7 +273,8 @@ class SettingsActivity : Activity() {
         }
         card.addView(row("qwertyuiop".map { "$it" to 1f }))
         card.addView(row("asdfghjkl".map { "$it" to 1f }))
-        card.addView(row(listOf("⇧" to 1.5f) + "zxcvbnm".map { "$it" to 1f } + ("⌫" to 1.5f), setOf("⇧", "⌫")))
+        card.addView(row(listOf("⇧" to 1.5f) + "zxcvbnm".map { "$it" to 1f } + ("backspace" to 1.5f), setOf("⇧", "backspace")))
+        card.addView(row(listOf("?123" to 1.35f, "," to 0.85f, "space" to 4.45f, "." to 0.85f, "↵" to 1.5f), setOf("?123", ",", ".", "↵")))
         holder.addView(card, LinearLayout.LayoutParams(-1, -2))
     }
 }

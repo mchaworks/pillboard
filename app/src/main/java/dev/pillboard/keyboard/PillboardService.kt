@@ -78,7 +78,10 @@ class PillboardService : InputMethodService() {
         builtSeed = Prefs.seedColor(this)
         themed = ContextThemeWrapper(this, if (builtDynamic) R.style.Theme_Pillboard else R.style.Theme_Pillboard_Static)
         tokens = KbTokens(themed)
-        val r = LinearLayout(themed).apply { orientation = LinearLayout.VERTICAL }
+        val r = LinearLayout(themed).apply {
+            orientation = LinearLayout.VERTICAL
+            clipToOutline = true
+        }
         root = r
         // Keep keys clear of the system navigation bar (fixes overlap on edge-to-edge Android 15+)
         ViewCompat.setOnApplyWindowInsetsListener(r) { _, insets ->
@@ -103,7 +106,7 @@ class PillboardService : InputMethodService() {
     }
 
     private fun applyPadding() {
-        root?.setPadding(6.dp, 8.dp, 6.dp, 8.dp + navInset)
+        root?.setPadding(7.dp, 8.dp, 7.dp, 8.dp + navInset)
     }
 
     private fun blurSupported() = Build.VERSION.SDK_INT >= 31 &&
@@ -114,18 +117,21 @@ class PillboardService : InputMethodService() {
      * device really supports it; otherwise the background stays fully opaque (no see-through).
      */
     private fun applyBlur() {
-        val blur = Prefs.bool(this, "blur", false) && blurSupported()
-        val base = tokens.background
-        val fill = if (blur) (base and 0x00FFFFFF) or (0xB0 shl 24) else base
-        val r = 28.dp.toFloat()
-        fun shape() = GradientDrawable().apply {
+        val blurRequested = Prefs.bool(this, "blur", false)
+        val blur = blurRequested && blurSupported()
+        // Keep a translucent glass tint as a graceful fallback on ROMs without cross-window blur.
+        val fill = if (blurRequested) tokens.glassFill else tokens.background
+        val radius = 30.dp.toFloat()
+        fun shell() = GradientDrawable().apply {
             setColor(fill)
-            cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+            cornerRadius = radius
+            setStroke(1.dp, tokens.glassStroke)
         }
-        root?.background = if (blur) null else shape()
+        root?.background = shell()
         window.window?.let { w ->
-            w.setBackgroundDrawable(if (blur) shape() else ColorDrawable(Color.TRANSPARENT))
-            if (Build.VERSION.SDK_INT >= 31) w.setBackgroundBlurRadius(if (blur) 70.dp else 0)
+            // Android provides the real backdrop blur; the translucent shell supplies the glass tint.
+            w.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            if (Build.VERSION.SDK_INT >= 31) w.setBackgroundBlurRadius(if (blur) 64.dp else 0)
         }
     }
 
@@ -136,6 +142,9 @@ class PillboardService : InputMethodService() {
         letterKeys.clear(); shiftKey = null
         val keyH = Prefs.int(this, "key_h", 50).dp
 
+        // A restrained specular edge makes the shell read as glass without adding noise.
+        r.addView(View(themed).apply { setBackgroundColor(tokens.glassHighlight) },
+            LinearLayout.LayoutParams(1.dp, 1.dp).apply { marginStart = 22.dp; marginEnd = 22.dp; bottomMargin = 3.dp })
         strip = if (Prefs.bool(this, "suggest", true) && suggestionsAllowed()) buildStrip().also { r.addView(it) } else null
 
         if (!symbols) {
@@ -145,7 +154,7 @@ class PillboardService : InputMethodService() {
             r.addView(rowOf {
                 shiftKey = key(shiftGlyph(), keyH, 1.5f, shiftStyle()) { onShift() }
                 chars("zxcvbnm", keyH)
-                key("⌫", keyH, 1.5f, KeyStyle.SPECIAL, repeat = true) { backspace() }
+                key("backspace", keyH, 1.5f, KeyStyle.SPECIAL, repeat = true) { backspace() }
             })
         } else {
             r.addView(rowOf { chars("1234567890", keyH) })
@@ -153,13 +162,14 @@ class PillboardService : InputMethodService() {
             r.addView(rowOf {
                 gap(1.5f)
                 chars(".,?!'", keyH, 1.4f)
-                key("⌫", keyH, 1.5f, KeyStyle.SPECIAL, repeat = true) { backspace() }
+                key("backspace", keyH, 1.5f, KeyStyle.SPECIAL, repeat = true) { backspace() }
             })
         }
         r.addView(rowOf {
-            key(if (symbols) "ABC" else "123", keyH, 1.3f, KeyStyle.SPECIAL) { symbols = !symbols; render() }
-            key("🌐", keyH, 1f, KeyStyle.SPECIAL) { nextKeyboard() }
-            key("space", keyH, 4.6f) { space() }
+            key(if (symbols) "ABC" else "?123", keyH, 1.35f, KeyStyle.SPECIAL) { symbols = !symbols; render() }
+            key(",", keyH, 0.85f, KeyStyle.SPECIAL) { type(",") }
+            key("space", keyH, 4.45f) { space() }
+            key(".", keyH, 0.85f, KeyStyle.SPECIAL) { type(".") }
             val action = currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: 0
             val hasAction = action != EditorInfo.IME_ACTION_NONE && action != EditorInfo.IME_ACTION_UNSPECIFIED
             val name = when (action) {
@@ -170,7 +180,7 @@ class PillboardService : InputMethodService() {
                 EditorInfo.IME_ACTION_NEXT -> "next"
                 else -> "return"
             }
-            key(name, keyH, 1.6f, if (hasAction) KeyStyle.ACCENT else KeyStyle.SPECIAL) { enter() }
+            key(name, keyH, 1.5f, if (hasAction) KeyStyle.ACCENT else KeyStyle.SPECIAL) { enter() }
         })
         updateStrip()
     }
@@ -243,10 +253,16 @@ class PillboardService : InputMethodService() {
 
     private fun buildStrip() = LinearLayout(themed).apply {
         orientation = LinearLayout.HORIZONTAL
-        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 40.dp)
+        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 42.dp)
+        background = GradientDrawable().apply {
+            setColor(tokens.glassFill)
+            cornerRadius = 18.dp.toFloat()
+            setStroke(1.dp, tokens.glassStroke)
+        }
+        setPadding(4.dp, 0, 4.dp, 0)
         repeat(3) { i ->
             if (i > 0) addView(View(themed).apply {
-                setBackgroundColor((tokens.keyText and 0x00FFFFFF) or (0x1F shl 24))
+                setBackgroundColor(tokens.glassStroke)
             }, LinearLayout.LayoutParams(1.dp, 16.dp).apply { gravity = Gravity.CENTER_VERTICAL })
             addView(TextView(themed).apply {
                 gravity = Gravity.CENTER
@@ -269,7 +285,14 @@ class PillboardService : InputMethodService() {
         for (i in 0 until 3) {
             val tv = s.getChildAt(i * 2) as TextView
             val sug = list.getOrNull(i)
-            tv.text = sug ?: ""
+            val nextText = sug ?: ""
+            if (tv.text.toString() != nextText) {
+                tv.animate().cancel()
+                tv.animate().alpha(0.45f).translationY(3.dp.toFloat()).setDuration(70).withEndAction {
+                    tv.text = nextText
+                    tv.animate().alpha(1f).translationY(0f).setDuration(150).start()
+                }.start()
+            }
             tv.setOnClickListener(if (sug == null) null else View.OnClickListener {
                 lastFix = null
                 currentInputConnection?.let { ic ->
