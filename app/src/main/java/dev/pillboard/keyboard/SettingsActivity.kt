@@ -95,14 +95,14 @@ class SettingsActivity : Activity() {
         col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(
-                top,
+                this@SettingsActivity.top,
                 LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 )
             )
             addView(
-                body,
+                this@SettingsActivity.body,
                 LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
@@ -218,7 +218,7 @@ class SettingsActivity : Activity() {
         addPreview()
         body.addView(LinearLayout(this).apply {
             addView(ui.button("Customize", false) { go(Page.APPEARANCE) }, LinearLayout.LayoutParams(0, 44.dp, 1f).apply { marginEnd = 4.dp })
-            addView(ui.button("Test typing", true) { scroll.smoothScrollTo(0, (tryHeader?.top ?: 0) + top.getHeight()); focusTest() },
+            addView(ui.button("Test typing", true) { scroll.smoothScrollTo(0, (tryHeader?.top ?: 0) + top.height); focusTest() },
                 LinearLayout.LayoutParams(0, 44.dp, 1f).apply { marginStart = 4.dp })
         }, ui.lp())
         body.addView(ui.section("Settings"))
