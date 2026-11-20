@@ -37,6 +37,24 @@ class PillboardService : InputMethodService() {
             "s" to listOf("ß"),
             "y" to listOf("ÿ"),
         )
+
+        /** Long-press alternates on the symbols page. */
+        val PUNCT = mapOf(
+            "." to listOf("…"), "?" to listOf("¿"), "!" to listOf("¡"),
+            "'" to listOf("‘", "’"), "\"" to listOf("“", "”", "«", "»"),
+            "-" to listOf("–", "—", "•"), "$" to listOf("€", "£", "¥", "¢"),
+            "&" to listOf("§"), "0" to listOf("°"),
+        )
+
+        /** Small built-in auto-correct list (applied on space; backspace right after undoes it). */
+        val FIXES = mapOf(
+            "teh" to "the", "adn" to "and", "thier" to "their", "becuase" to "because", "recieve" to "receive",
+            "definately" to "definitely", "wierd" to "weird", "freind" to "friend", "alot" to "a lot",
+            "tommorow" to "tomorrow", "dont" to "don't", "cant" to "can't", "wont" to "won't", "didnt" to "didn't",
+            "doesnt" to "doesn't", "isnt" to "isn't", "wasnt" to "wasn't", "couldnt" to "couldn't",
+            "shouldnt" to "shouldn't", "wouldnt" to "wouldn't", "youre" to "you're", "theyre" to "they're",
+            "thats" to "that's", "im" to "I'm", "ive" to "I've", "i" to "I",
+        )
     }
 
     private enum class Shift { OFF, ON, LOCK }
@@ -44,6 +62,7 @@ class PillboardService : InputMethodService() {
     private var shift = Shift.OFF
     private var symbols = false
     private var lastShiftTap = 0L
+    private var lastFix: Pair<String, String>? = null
     private var root: LinearLayout? = null
     private var strip: LinearLayout? = null
     private val letterKeys = mutableListOf<KeyView>()
@@ -52,11 +71,11 @@ class PillboardService : InputMethodService() {
     private lateinit var themed: Context
     private lateinit var tokens: KbTokens
     private var builtDynamic = true
-    private var builtPreset = 0
+    private var builtSeed = 0
 
     override fun onCreateInputView(): View {
         builtDynamic = Prefs.dynamic(this)
-        builtPreset = Prefs.preset(this)
+        builtSeed = Prefs.seedColor(this)
         themed = ContextThemeWrapper(this, if (builtDynamic) R.style.Theme_Pillboard else R.style.Theme_Pillboard_Static)
         tokens = KbTokens(themed)
         val r = LinearLayout(themed).apply { orientation = LinearLayout.VERTICAL }
@@ -75,7 +94,7 @@ class PillboardService : InputMethodService() {
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
-        if (Prefs.dynamic(this) != builtDynamic || Prefs.preset(this) != builtPreset) setInputView(onCreateInputView())
+        if (Prefs.dynamic(this) != builtDynamic || Prefs.seedColor(this) != builtSeed) setInputView(onCreateInputView())
         symbols = false
         autoCap()
         applyBlur()
@@ -120,10 +139,11 @@ class PillboardService : InputMethodService() {
         strip = if (Prefs.bool(this, "suggest", true) && suggestionsAllowed()) buildStrip().also { r.addView(it) } else null
 
         if (!symbols) {
+            if (Prefs.bool(this, "numrow", false)) r.addView(rowOf { chars("1234567890", (keyH * 0.8f).toInt()) })
             r.addView(rowOf { chars("qwertyuiop", keyH) })
             r.addView(rowOf { gap(0.5f); chars("asdfghjkl", keyH); gap(0.5f) })
             r.addView(rowOf {
-                shiftKey = key(shiftGlyph(), keyH, 1.5f, if (shift == Shift.OFF) KeyStyle.SPECIAL else KeyStyle.LETTER) { onShift() }
+                shiftKey = key(shiftGlyph(), keyH, 1.5f, shiftStyle()) { onShift() }
                 chars("zxcvbnm", keyH)
                 key("⌫", keyH, 1.5f, KeyStyle.SPECIAL, repeat = true) { backspace() }
             })
@@ -165,7 +185,8 @@ class PillboardService : InputMethodService() {
         label: String, h: Int, w: Float = 1f, style: KeyStyle = KeyStyle.LETTER,
         repeat: Boolean = false, onKey: () -> Unit,
     ): KeyView {
-        val lp = LinearLayout.LayoutParams(0, h, w).apply { setMargins(3.dp, 4.dp, 3.dp, 4.dp) }
+        val g = Prefs.int(this@PillboardService, "key_gap", 3)
+        val lp = LinearLayout.LayoutParams(0, h, w).apply { setMargins(g.dp, (g + 1).dp, g.dp, (g + 1).dp) }
         return KeyView(themed, label, style, tokens, repeat, onKey).also { addView(it, lp) }
     }
 
@@ -176,17 +197,22 @@ class PillboardService : InputMethodService() {
             val shown = if (shift != Shift.OFF && !symbols) c.uppercaseChar() else c
             val holder = arrayOfNulls<KeyView>(1)
             holder[0] = key(shown.toString(), h, w) { type(holder[0]!!.text.toString()) }
-            if (!symbols) {
-                val kv = holder[0]!!
+            val kv = holder[0]!!
+            if (!symbols && c.isLetter()) {
                 letterKeys.add(kv)
                 kv.altsFor = { l ->
                     val base = l.lowercase()
                     ALTS[base]?.map { if (l != base) it.uppercase() else it } ?: emptyList()
                 }
-                kv.onAlt = { type(it) }
+            } else {
+                kv.altsFor = { l -> PUNCT[l] ?: emptyList() }
             }
+            kv.onAlt = { type(it) }
         }
     }
+
+    /** OFF = tonal special key, ON = inverted (one capital), LOCK = accent. Each state is visibly distinct. */
+    private fun shiftStyle() = when (shift) { Shift.OFF -> KeyStyle.SPECIAL; Shift.ON -> KeyStyle.ACTIVE; Shift.LOCK -> KeyStyle.ACCENT }
 
     private fun shiftGlyph() = when (shift) { Shift.OFF -> "⇧"; Shift.ON -> "⬆"; Shift.LOCK -> "⇪" }
 
@@ -199,7 +225,7 @@ class PillboardService : InputMethodService() {
         }
         shiftKey?.let {
             it.setLabel(shiftGlyph())
-            it.setKeyStyle(if (shift == Shift.OFF) KeyStyle.SPECIAL else KeyStyle.LETTER)
+            it.setKeyStyle(shiftStyle())
         }
     }
 
@@ -220,8 +246,8 @@ class PillboardService : InputMethodService() {
         layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 40.dp)
         repeat(3) { i ->
             if (i > 0) addView(View(themed).apply {
-                setBackgroundColor((tokens.keyText and 0x00FFFFFF) or (0x33 shl 24))
-            }, LinearLayout.LayoutParams(1.dp, 18.dp).apply { gravity = Gravity.CENTER_VERTICAL })
+                setBackgroundColor((tokens.keyText and 0x00FFFFFF) or (0x1F shl 24))
+            }, LinearLayout.LayoutParams(1.dp, 16.dp).apply { gravity = Gravity.CENTER_VERTICAL })
             addView(TextView(themed).apply {
                 gravity = Gravity.CENTER
                 textSize = 16f
@@ -245,6 +271,7 @@ class PillboardService : InputMethodService() {
             val sug = list.getOrNull(i)
             tv.text = sug ?: ""
             tv.setOnClickListener(if (sug == null) null else View.OnClickListener {
+                lastFix = null
                 currentInputConnection?.let { ic ->
                     ic.deleteSurroundingText(word.length, 0)
                     ic.commitText("$sug ", 1)
@@ -256,11 +283,19 @@ class PillboardService : InputMethodService() {
 
     // ---- actions ----
     private fun type(s: String) {
+        lastFix = null
         currentInputConnection?.commitText(s, 1)
         afterEdit()
     }
 
     private fun backspace() {
+        val fix = lastFix; lastFix = null
+        val ic = currentInputConnection
+        if (fix != null && ic != null && ic.getTextBeforeCursor(fix.second.length, 0)?.toString() == fix.second) {
+            ic.deleteSurroundingText(fix.second.length, 0)   // undo auto-correct: restore what was typed
+            ic.commitText(fix.first, 1)
+            afterEdit(); return
+        }
         sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
         afterEdit()
     }
@@ -268,6 +303,8 @@ class PillboardService : InputMethodService() {
     /** iOS-style: double space becomes ". " */
     private fun space() {
         val ic = currentInputConnection ?: return
+        if (Prefs.bool(this, "autocorrect", true) && suggestionsAllowed() && autoCorrect(ic)) { afterEdit(); return }
+        lastFix = null
         val before = ic.getTextBeforeCursor(2, 0)?.toString() ?: ""
         if (Prefs.bool(this, "dblspace", true) && before.length == 2 && before[1] == ' ' && before[0].isLetterOrDigit()) {
             ic.deleteSurroundingText(1, 0)
@@ -278,7 +315,20 @@ class PillboardService : InputMethodService() {
         afterEdit()
     }
 
+    private fun autoCorrect(ic: android.view.inputmethod.InputConnection): Boolean {
+        val word = currentWord()
+        if (word.isEmpty()) return false
+        val fix = FIXES[word.lowercase()] ?: return false
+        val out = if (word != "i" && word[0].isUpperCase()) fix.replaceFirstChar { it.uppercase() } else fix
+        if (out == word) return false
+        ic.deleteSurroundingText(word.length, 0)
+        ic.commitText("$out ", 1)
+        lastFix = word to "$out "
+        return true
+    }
+
     private fun enter() {
+        lastFix = null
         if (!sendDefaultEditorAction(true)) sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
         afterEdit()
     }

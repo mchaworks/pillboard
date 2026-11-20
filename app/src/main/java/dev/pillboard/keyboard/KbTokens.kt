@@ -16,7 +16,7 @@ class KbTokens(private val ctx: Context) {
     val key = if (night) c(MR.attr.colorSurfaceContainerHighest, 0xFF36343B.toInt())
               else c(MR.attr.colorSurfaceContainerLowest, Color.WHITE)
     val keyText = c(MR.attr.colorOnSurface, if (night) Color.WHITE else Color.BLACK)
-    private val seed: Int? = if (Prefs.dynamic(ctx)) null else Prefs.PRESETS[Prefs.preset(ctx)].second
+    private val seed: Int? = if (Prefs.dynamic(ctx)) null else Prefs.seedColor(ctx)
 
     val special = seed?.let { ColorUtils.blendARGB(key, it, 0.16f) } ?: c(MR.attr.colorSecondaryContainer, 0xFF4A4458.toInt())
     val specialText = seed?.let { keyText } ?: c(MR.attr.colorOnSecondaryContainer, Color.WHITE)

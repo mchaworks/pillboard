@@ -1,10 +1,10 @@
 package dev.pillboard.keyboard
 
 import android.annotation.SuppressLint
-import android.animation.ValueAnimator
 import android.content.Context
 import android.content.res.Resources
 import android.graphics.drawable.GradientDrawable
+import android.provider.Settings
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
@@ -15,10 +15,10 @@ import android.widget.TextView
 
 val Int.dp: Int get() = (this * Resources.getSystem().displayMetrics.density).toInt()
 
-enum class KeyStyle { LETTER, SPECIAL, ACCENT }
+enum class KeyStyle { LETTER, SPECIAL, ACCENT, ACTIVE }
 
 /**
- * A key that morphs from rounded-rect to pill on press (M3 Expressive shape morph).
+ * Rounded-rect key: instant tonal change + slight scale-down on press, spring release.
  * Plain keys commit on touch DOWN (no dropped letters when typing fast / rolling fingers).
  * Keys with long-press alternates ([altsFor] returns a non-empty list) commit on UP instead.
  */
@@ -36,13 +36,13 @@ class KeyView(
     var altsFor: ((String) -> List<String>)? = null
     var onAlt: ((String) -> Unit)? = null
 
-    private val restRadius = 12.dp.toFloat()
+    private val restRadius = Prefs.int(context, "key_r", 10).dp.toFloat()
     private var fill = 0
     private var pressedFill = 0
     private var ink = 0
     private var pressedInk = 0
     private val shape = GradientDrawable()
-    private var morph: ValueAnimator? = null
+    private val motionOn: Boolean = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) != 0f
 
     private var pendingUp = false
     private var alts = emptyList<String>()
@@ -65,7 +65,7 @@ class KeyView(
         textSize = if (label.length == 1 && style != KeyStyle.ACCENT) 22f else 15f
         shape.cornerRadius = restRadius
         background = shape
-        elevation = 1.dp.toFloat()
+        elevation = 0f
     }
 
     private fun applyStyle(style: KeyStyle) {
@@ -73,6 +73,7 @@ class KeyView(
             KeyStyle.LETTER -> { fill = t.key; ink = t.keyText }
             KeyStyle.SPECIAL -> { fill = t.special; ink = t.specialText }
             KeyStyle.ACCENT -> { fill = t.accent; ink = t.onAccent }
+            KeyStyle.ACTIVE -> { fill = t.keyText; ink = t.key }
         }
         pressedFill = t.pressed
         pressedInk = t.pressedText
@@ -85,19 +86,14 @@ class KeyView(
     fun setLabel(l: String) { text = l; contentDescription = l }
 
     private fun animateTo(down: Boolean) {
-        morph?.cancel()
+        // Color first, instantly: input never waits on animation.
         shape.setColor(if (down) pressedFill else fill)
         setTextColor(if (down) pressedInk else ink)
-        val target = if (down) height / 2f else restRadius
-        morph = ValueAnimator.ofFloat(shape.cornerRadius, target).apply {
-            duration = if (down) 90 else 220
-            if (!down) interpolator = OvershootInterpolator(2f)
-            addUpdateListener { shape.cornerRadius = it.animatedValue as Float }
-            start()
-        }
-        val s = if (down) 0.95f else 1f
-        animate().scaleX(s).scaleY(s).setDuration(if (down) 90 else 220)
-            .setInterpolator(if (down) null else OvershootInterpolator(3f)).start()
+        val sc = if (down) 0.95f else 1f
+        animate().cancel()
+        if (!motionOn) { scaleX = sc; scaleY = sc; return }
+        animate().scaleX(sc).scaleY(sc).setDuration(if (down) 70 else 200)
+            .setInterpolator(if (down) null else OvershootInterpolator(2.5f)).start()
     }
 
     // ---- long-press alternates ----
@@ -109,7 +105,7 @@ class KeyView(
         val itemH = 52.dp
         val pad = 6.dp
         val box = LinearLayout(context).apply {
-            background = GradientDrawable().apply { setColor(t.special); cornerRadius = 16.dp.toFloat() }
+            background = GradientDrawable().apply { setColor(t.special); cornerRadius = 14.dp.toFloat() }
             setPadding(pad, pad, pad, pad)
             items.forEach { addView(it, LinearLayout.LayoutParams(itemW, itemH)) }
         }
@@ -123,7 +119,7 @@ class KeyView(
         altIdx = 0
         popup = PopupWindow(box, total, itemH + pad * 2, false).apply {
             isTouchable = false
-            elevation = 8.dp.toFloat()
+            elevation = 4.dp.toFloat()
             showAtLocation(this@KeyView, Gravity.NO_GRAVITY, x, y)
         }
         highlight()
@@ -133,7 +129,7 @@ class KeyView(
     private fun highlight() {
         altViews.forEachIndexed { i, v ->
             val on = i == altIdx
-            v.background = if (on) GradientDrawable().apply { setColor(t.accent); cornerRadius = 12.dp.toFloat() } else null
+            v.background = if (on) GradientDrawable().apply { setColor(t.accent); cornerRadius = 10.dp.toFloat() } else null
             v.setTextColor(if (on) t.onAccent else t.specialText)
         }
     }

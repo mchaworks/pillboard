@@ -1,7 +1,15 @@
 <resources>
-    <style name="Theme.Pillboard" parent="Theme.Material3.DynamicColors.DayNight" />
-    <style name="Theme.Pillboard.App" parent="Theme.Material3.DynamicColors.DayNight.NoActionBar" />
+    <style name="Theme.Pillboard" parent="Theme.Material3.DynamicColors.DayNight">
+        <item name="android:fontFamily">@font/google_sans_rounded</item>
+    </style>
+    <style name="Theme.Pillboard.App" parent="Theme.Material3.DynamicColors.DayNight.NoActionBar">
+        <item name="android:fontFamily">@font/google_sans_rounded</item>
+    </style>
     <!-- Used when "Material You colors" is off: fixed Material 3 baseline palette -->
-    <style name="Theme.Pillboard.Static" parent="Theme.Material3.DayNight" />
-    <style name="Theme.Pillboard.App.Static" parent="Theme.Material3.DayNight.NoActionBar" />
+    <style name="Theme.Pillboard.Static" parent="Theme.Material3.DayNight">
+        <item name="android:fontFamily">@font/google_sans_rounded</item>
+    </style>
+    <style name="Theme.Pillboard.App.Static" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:fontFamily">@font/google_sans_rounded</item>
+    </style>
 </resources>
