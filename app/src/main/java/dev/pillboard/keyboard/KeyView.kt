@@ -70,7 +70,7 @@ class KeyView(
             MotionEvent.ACTION_DOWN -> {
                 parent?.requestDisallowInterceptTouchEvent(true)
                 animateTo(true)
-                performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                if (Prefs.bool(context, "haptic", true)) performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                 if (repeats) { onKey(); postDelayed(repeater, 400) }
             }
             MotionEvent.ACTION_UP -> {
