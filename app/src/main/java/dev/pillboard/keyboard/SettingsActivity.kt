@@ -218,7 +218,7 @@ class SettingsActivity : Activity() {
         addPreview()
         body.addView(LinearLayout(this).apply {
             addView(ui.button("Customize", false) { go(Page.APPEARANCE) }, LinearLayout.LayoutParams(0, 44.dp, 1f).apply { marginEnd = 4.dp })
-            addView(ui.button("Test typing", true) { scroll.smoothScrollTo(0, (tryHeader?.top ?: 0) + top.height); focusTest() },
+            addView(ui.button("Test typing", true) { scroll.smoothScrollTo(0, (tryHeader?.top ?: 0) + this@SettingsActivity.top.height); focusTest() },
                 LinearLayout.LayoutParams(0, 44.dp, 1f).apply { marginStart = 4.dp })
         }, ui.lp())
         body.addView(ui.section("Settings"))
