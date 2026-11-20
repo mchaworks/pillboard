@@ -43,3 +43,14 @@ Liquid Expressive is Pillboard's unified visual language: iOS 26-inspired Liquid
 ## Balance
 
 The target is a balanced fusion: Liquid Glass controls the outer surface, depth, and translucency; Material 3 Expressive controls geometry, semantic color, hierarchy, and interaction. Avoid applying blur or transparency to every key because it weakens legibility and makes the keyboard visually noisy.
+
+## Implementation notes (Phase 1–2)
+
+- **Tokens:** all geometry, elevation, motion and color live in `KbTokens` (container 30dp, key 12dp default, special keys +3dp, Enter/active Shift +8dp, popup 20dp, strip 18dp).
+- **Shell:** `KbTokens.shell()` — tonal gradient + hairline outline + a specular top edge drawn inside the same drawable (no extra views).
+- **Keycaps:** solid tonal surfaces with a very subtle top-to-bottom sheen; pressed state is a solid tonal fill with corner morph.
+- **Icons:** Material-Symbols-style rounded vectors (`ic_backspace`, `ic_shift`, `ic_shift_on`, `ic_caps_lock`, `ic_enter`, `ic_search`, `ic_send`, `ic_check`, `ic_arrow_forward`), drawn centered by `KeyView`.
+- **Suggestion bar:** faint tonal wash over the glass, no outline, hairline dividers, pressed state per slot, medium weight for the lead candidate.
+- **Popups:** `KeyPreview` (one reusable window, shown after the key is committed) and the long-press alternates share the same near-opaque floating surface, padded so elevation shadows are not clipped.
+- **Rows:** `isBaselineAligned = false` — mixed text sizes and icons must never shift keys vertically.
+- No globe key: system navigation already provides language switching.

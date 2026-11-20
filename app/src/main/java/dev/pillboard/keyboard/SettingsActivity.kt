@@ -18,6 +18,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 
 /** Home + subpages (Typing, Appearance, Feedback, Advanced, About) with search. One activity, in-place navigation. */
@@ -69,11 +70,14 @@ class SettingsActivity : Activity() {
                     if (blurOk) "Liquid Glass backdrop blur" else "Glass tint fallback; system blur unavailable",
                     "blur", false, enabled = true)
             },
+            Item(Page.APPEARANCE, "Key preview", "popup bubble character magnify") {
+                ui.toggle("Key preview", "Floating character bubble above the pressed key", "keypreview", true)
+            },
             Item(Page.APPEARANCE, "Key height", "size tall short dp") {
                 ui.slider("Key height", 42, 62, "key_h", 50, listOf("Short" to 44, "Standard" to 50, "Tall" to 58)) { refreshPreview() }
             },
             Item(Page.APPEARANCE, "Key shape", "radius corner round square") {
-                ui.slider("Key shape", 4, 20, "key_r", 10, listOf("Square" to 6, "Standard" to 10, "Round" to 16)) { refreshPreview() }
+                ui.slider("Key shape", 4, 20, "key_r", KbTokens.KEY_R_DEFAULT, listOf("Square" to 6, "Standard" to KbTokens.KEY_R_DEFAULT, "Round" to 18)) { refreshPreview() }
             },
             Item(Page.APPEARANCE, "Key spacing", "gap margin tight") {
                 ui.slider("Key spacing", 2, 6, "key_gap", 3, listOf("Tight" to 2, "Standard" to 3, "Roomy" to 5)) { refreshPreview() }
@@ -114,10 +118,17 @@ class SettingsActivity : Activity() {
         }
         scroll = ScrollView(this).apply { addView(col) }
         setContentView(scroll)
-        // Edge-to-edge (targetSdk 35): pad by real system bar insets.
+        // Edge-to-edge (targetSdk 35): pad by real system bar insets, and by the keyboard (IME) when open,
+        // otherwise the "Test typing" field ends up hidden behind the keyboard.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         ViewCompat.setOnApplyWindowInsetsListener(scroll) { _, insets ->
             val b = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            col.setPadding(16.dp, b.top + 16.dp, 16.dp, b.bottom + 32.dp)
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            col.setPadding(16.dp, b.top + 16.dp, 16.dp, maxOf(b.bottom, ime.bottom) + 32.dp)
+            val field = testInput
+            if (ime.bottom > 0 && field != null && field.hasFocus()) {
+                scroll.post { field.requestRectangleOnScreen(android.graphics.Rect(0, 0, field.width, field.height + 24.dp), false) }
+            }
             insets
         }
         renderPage()
@@ -253,28 +264,47 @@ class SettingsActivity : Activity() {
     private fun buildPreview() {
         val holder = previewHolder ?: return
         val t = KbTokens(this)
-        val h = (Prefs.int(this, "key_h", 50).dp * 0.7f).toInt()
+        val scale = 0.7f
+        val h = (Prefs.int(this, "key_h", 50).dp * scale).toInt()
+        val g = (Prefs.int(this, "key_gap", 3).dp * scale).toInt()
         holder.removeAllViews()
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(4.dp, 5.dp, 4.dp, 5.dp)
-            background = GradientDrawable().apply {
-                setColor(t.glassFill)
-                cornerRadius = 26.dp.toFloat()
-                setStroke(1.dp, t.glassStroke)
+            setPadding(5.dp, 6.dp, 5.dp, 6.dp)
+            background = t.shell()
+        }
+        if (Prefs.bool(this, "suggest", true)) {
+            card.addView(LinearLayout(this).apply {
+                isBaselineAligned = false
+                background = t.stripBackground()
+                setPadding(2.dp, 2.dp, 2.dp, 2.dp)
+                listOf("I", "The", "I'm").forEachIndexed { i, w ->
+                    if (i > 0) addView(android.view.View(context).apply { setBackgroundColor(t.divider) },
+                        LinearLayout.LayoutParams(1.dp, 12.dp).apply { gravity = Gravity.CENTER_VERTICAL })
+                    addView(android.widget.TextView(context).apply {
+                        text = w; textSize = 13f; gravity = Gravity.CENTER; setTextColor(t.keyText)
+                    }, LinearLayout.LayoutParams(0, -1, 1f))
+                }
+            }, LinearLayout.LayoutParams(-1, 30.dp).apply { setMargins(2.dp, 0, 2.dp, 2.dp) })
+        }
+        /** label, weight, style, icon (0 = text key) */
+        class K(val label: String, val w: Float, val style: KeyStyle = KeyStyle.LETTER, val icon: Int = 0)
+        fun row(keys: List<K>) = LinearLayout(this).apply {
+            isBaselineAligned = false
+            keys.forEach { k ->
+                addView(KeyView(context, k.label, k.style, t, false, k.icon) {}.apply {
+                    textSize = if (k.label.length == 1 && k.icon == 0) 16f else 13f
+                    iconSize = 16.dp
+                }, LinearLayout.LayoutParams(0, h, k.w).apply { setMargins(g, g + 1.dp, g, g + 1.dp) })
             }
         }
-        fun row(keys: List<Pair<String, Float>>, special: Set<String> = emptySet()) = LinearLayout(this).apply {
-            keys.forEach { (k, w) ->
-                addView(KeyView(context, k, if (k in special) KeyStyle.SPECIAL else KeyStyle.LETTER, t, false) {}
-                    .apply { textSize = if (k.length == 1 && k !in special) 16f else 13f },
-                    LinearLayout.LayoutParams(0, h, w).apply { val g = (Prefs.int(this@SettingsActivity, "key_gap", 3).dp * 0.7f).toInt(); setMargins(g, g + 1.dp, g, g + 1.dp) })
-            }
-        }
-        card.addView(row("qwertyuiop".map { "$it" to 1f }))
-        card.addView(row("asdfghjkl".map { "$it" to 1f }))
-        card.addView(row(listOf("⇧" to 1.5f) + "zxcvbnm".map { "$it" to 1f } + ("backspace" to 1.5f), setOf("⇧", "backspace")))
-        card.addView(row(listOf("?123" to 1.35f, "," to 0.85f, "space" to 4.45f, "." to 0.85f, "↵" to 1.5f), setOf("?123", ",", ".", "↵")))
+        fun letters(s: String) = s.map { K("$it", 1f) }
+        card.addView(row(letters("qwertyuiop")))
+        card.addView(row(letters("asdfghjkl")))
+        card.addView(row(listOf(K("Shift", 1.5f, KeyStyle.SPECIAL, R.drawable.ic_shift)) + letters("zxcvbnm") +
+            K("Backspace", 1.5f, KeyStyle.SPECIAL, R.drawable.ic_backspace)))
+        card.addView(row(listOf(K("?123", 1.35f, KeyStyle.SPECIAL), K(",", 0.85f, KeyStyle.SPECIAL), K("space", 4.45f),
+            K(".", 0.85f, KeyStyle.SPECIAL), K("Enter", 1.5f, KeyStyle.SPECIAL, R.drawable.ic_enter))))
         holder.addView(card, LinearLayout.LayoutParams(-1, -2))
     }
 }

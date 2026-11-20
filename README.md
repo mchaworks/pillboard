@@ -9,7 +9,8 @@ An open-source Android keyboard with a rounded, Gboard-style layout:
 - Shift / double-tap caps lock, auto-capitalisation
 - Double-space inserts ". "
 - Hold backspace to repeat, haptic feedback
-- Globe key switches keyboards; action key adapts (go / search / send / done / next)
+- No globe key: language switching stays with Android's own navigation-bar switcher
+- Action key adapts (go / search / send / done / next) and shows a matching icon
 - 123 symbols layer
 
 ## Build
@@ -25,7 +26,7 @@ Output: `app/build/outputs/apk/debug/app-debug.apk`
 Install the APK, open Pillboard, tap **Enable keyboard**, switch it on, then **Switch keyboard**.
 
 ## Roadmap
-Key preview bubbles, emoji panel, long-press accents, suggestions, themes, more languages. PRs welcome.
+Emoji panel, more languages, learned suggestions. PRs welcome.
 
 ## License
 MIT
