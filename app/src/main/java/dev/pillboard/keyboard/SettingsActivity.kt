@@ -52,6 +52,14 @@ class SettingsActivity : Activity() {
     private val blurOk get() = Build.VERSION.SDK_INT >= 31 &&
         (getSystemService(WINDOW_SERVICE) as WindowManager).isCrossWindowBlurEnabled
 
+    /** What the system actually allows right now, so a blur that "does nothing" has a visible reason. */
+    private fun blurStatus(): String = when {
+        Build.VERSION.SDK_INT < 31 -> "Needs Android 12+"
+        !blurOk -> "Blocked by system"
+        Prefs.bool(this, "blur", false) -> "Active"
+        else -> "Available, off"
+    }
+
     private val items: List<Item> by lazy {
         listOf(
             Item(Page.TYPING, "Suggestions", "word bar predictions") { ui.toggle("Suggestions", "Word bar above the keys", "suggest", true) },
@@ -69,6 +77,17 @@ class SettingsActivity : Activity() {
                 ui.toggle("Blur background",
                     if (blurOk) "Liquid Glass backdrop blur" else "Glass tint fallback; system blur unavailable",
                     "blur", false, enabled = true)
+            },
+            Item(Page.APPEARANCE, "Blur status", "blur glass system available blocked") { ui.info("Blur status", blurStatus()) },
+            Item(Page.APPEARANCE, "Liquid light", "glass specular rim shader agsl highlight edge") {
+                ui.toggle("Liquid light",
+                    if (Build.VERSION.SDK_INT >= 33) "Shader-lit glass edge; the light leans toward your touch" else "Needs Android 13+, using gradient edge light",
+                    "glass_fx", true, enabled = Build.VERSION.SDK_INT >= 33, onChange = { refreshPreview() })
+            },
+            Item(Page.APPEARANCE, "Liquid lens", "refraction lens magnifier key preview glass") {
+                ui.toggle("Liquid lens",
+                    if (Build.VERSION.SDK_INT >= 33) "Key preview refracts the keys around it" else "Needs Android 13+, using the plain bubble",
+                    "lens", true, enabled = Build.VERSION.SDK_INT >= 33)
             },
             Item(Page.APPEARANCE, "Key preview", "popup bubble character magnify") {
                 ui.toggle("Key preview", "Floating character bubble above the pressed key", "keypreview", true)
@@ -295,7 +314,7 @@ class SettingsActivity : Activity() {
                 addView(KeyView(context, k.label, k.style, t, false, k.icon) {}.apply {
                     textSize = if (k.label.length == 1 && k.icon == 0) 16f else 13f
                     iconSize = 16.dp
-                }, LinearLayout.LayoutParams(0, h, k.w).apply { setMargins(g, g + 1.dp, g, g + 1.dp) })
+                }, LinearLayout.LayoutParams(0, h, k.w).apply { setMargins(g, g + 2.dp, g, g + 2.dp) })
             }
         }
         fun letters(s: String) = s.map { K("$it", 1f) }
@@ -303,8 +322,8 @@ class SettingsActivity : Activity() {
         card.addView(row(letters("asdfghjkl")))
         card.addView(row(listOf(K("Shift", 1.5f, KeyStyle.SPECIAL, R.drawable.ic_shift)) + letters("zxcvbnm") +
             K("Backspace", 1.5f, KeyStyle.SPECIAL, R.drawable.ic_backspace)))
-        card.addView(row(listOf(K("?123", 1.35f, KeyStyle.SPECIAL), K(",", 0.85f, KeyStyle.SPECIAL), K("space", 4.45f),
-            K(".", 0.85f, KeyStyle.SPECIAL), K("Enter", 1.5f, KeyStyle.SPECIAL, R.drawable.ic_enter))))
+        card.addView(row(listOf(K("?123", 1.35f, KeyStyle.SPECIAL), K(",", 0.85f, KeyStyle.SPECIAL), K("space", 4.45f, KeyStyle.SPECIAL),
+            K(".", 0.85f, KeyStyle.SPECIAL), K("Enter", 1.5f, KeyStyle.ACCENT, R.drawable.ic_enter))))
         holder.addView(card, LinearLayout.LayoutParams(-1, -2))
     }
 }

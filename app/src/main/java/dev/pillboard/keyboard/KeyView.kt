@@ -6,6 +6,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.res.Resources
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.provider.Settings
@@ -59,7 +60,10 @@ class KeyPreview(ctx: Context, private val t: KbTokens) {
         background = t.popupBackground()
         elevation = t.popupElevation
     }
-    private val holder = shadowHolder(ctx, bubble)
+    /** API 33+: a refracting glass lens that magnifies the pressed key; otherwise the plain bubble above. */
+    private val lens: LensView? = if (LensShader.available() && Prefs.bool(ctx, "lens", true)) LensView(ctx, t).takeIf { it.ready } else null
+    private val face: View = lens ?: bubble
+    private val holder = shadowHolder(ctx, face)
     private var popup: PopupWindow? = null
     private var owner: View? = null
     private var fading = false
@@ -76,19 +80,20 @@ class KeyPreview(ctx: Context, private val t: KbTokens) {
         val x = (bx - pad).coerceAtLeast(0)
         val y = (loc[1] + 2.dp - bh - pad).coerceAtLeast(0)
         bubble.text = glyph
+        lens?.aim(key, glyph)
         owner = key
         val p = popup ?: PopupWindow(holder, ww, wh, false).also { it.isTouchable = false; popup = it }
         val wasSolid = p.isShowing && !fading
         fading = false
-        bubble.animate().cancel()
+        face.animate().cancel()
         if (p.isShowing) {
             p.update(x, y, ww, wh)
-            if (wasSolid) { bubble.alpha = 1f; bubble.scaleX = 1f; bubble.scaleY = 1f }
-            else popIn(bubble, bw, bh, t.popupInMs, motionOn)
+            if (wasSolid) { face.alpha = 1f; face.scaleX = 1f; face.scaleY = 1f }
+            else popIn(face, bw, bh, t.popupInMs, motionOn)
         } else {
             p.width = ww; p.height = wh
             p.showAtLocation(key, Gravity.NO_GRAVITY, x, y)
-            popIn(bubble, bw, bh, t.popupInMs, motionOn)
+            popIn(face, bw, bh, t.popupInMs, motionOn)
         }
     }
 
@@ -98,11 +103,11 @@ class KeyPreview(ctx: Context, private val t: KbTokens) {
     /** Quick fade-out unless [immediate]; a new [show] cancels the fade, so rolling typing never flickers. */
     fun dismiss(immediate: Boolean = false) {
         owner = null
-        bubble.animate().cancel()
+        face.animate().cancel()
         val p = popup ?: return
         if (immediate || !motionOn || !p.isShowing) { fading = false; p.dismiss(); return }
         fading = true
-        bubble.animate().alpha(0f).setDuration(t.fadeOutMs).withEndAction {
+        face.animate().alpha(0f).setDuration(t.fadeOutMs).withEndAction {
             if (fading) { fading = false; p.dismiss() }
         }.start()
     }
@@ -131,6 +136,8 @@ class KeyView(
     /** Shared character-preview bubble; null disables previews (e.g. in the settings preview). */
     var preview: KeyPreview? = null
     var iconSize = 22.dp
+    /** The shell's glass surface; its light leans toward the pressed key (AGSL layer only, otherwise a no-op). */
+    var glass: GlassSurfaceDrawable? = null
 
     private val baseRadius = Prefs.int(context, "key_r", KbTokens.KEY_R_DEFAULT).dp.toFloat()
     private var rest = baseRadius
@@ -164,7 +171,7 @@ class KeyView(
         text = label
         contentDescription = label
         gravity = Gravity.CENTER
-        textSize = if (label.length == 1 && style != KeyStyle.ACCENT) 22f else 15f
+        textSize = if (label.length == 1 && style != KeyStyle.ACCENT) 22f else 14f
         applyStyle(style)
         background = shape
         elevation = t.keyElevation
@@ -187,8 +194,8 @@ class KeyView(
             KeyStyle.ACCENT -> { fill = t.accent; ink = t.onAccent }
             KeyStyle.ACTIVE -> { fill = t.keyText; ink = t.key }
         }
-        pressedFill = t.pressed
-        pressedInk = t.pressedText
+        pressedFill = if (style == KeyStyle.ACCENT) t.accentPressed else t.pressed
+        pressedInk = if (style == KeyStyle.ACCENT) t.onAccent else t.pressedText
         rest = radiusFor(style)
         restColors = t.sheen(fill)          // cached: no allocation on every release
         downColors[0] = pressedFill; downColors[1] = pressedFill
@@ -234,11 +241,7 @@ class KeyView(
     private fun paint(down: Boolean) {
         shape.setColors(if (down) downColors else restColors)
         if (down) shape.cornerRadius = rest + t.pressRadiusBoost   // release morphs back via morphRadius()
-        shape.setStroke(1.dp, when {
-            down -> t.glassHighlight
-            currentStyle == KeyStyle.LETTER -> t.keyStroke
-            else -> t.glassStroke
-        })
+        shape.setStroke(0, Color.TRANSPARENT)   // flat keycaps: no outline
     }
 
     /** Update in place (no view rebuild), e.g. when Shift changes. */
@@ -331,6 +334,17 @@ class KeyView(
         altViews = emptyList()
     }
 
+    /** After input and key feedback: ease the shell's specular light toward this key (down) or back to rest (up). */
+    private fun leanGlass(down: Boolean) {
+        val g = glass ?: return
+        if (!g.shaderActive) return
+        if (!down) { g.leanLight(null, motionOn); return }
+        val ww = rootView.width
+        if (ww <= 0) return
+        val loc = IntArray(2); getLocationInWindow(loc)
+        g.leanLight((loc[0] + width / 2f) / ww, motionOn)
+    }
+
     private fun previewable() = icon == null && !repeats && text.length == 1 && !text[0].isWhitespace()
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
@@ -348,6 +362,7 @@ class KeyView(
                 animateTo(true)
                 if (Prefs.bool(context, "haptic", true)) performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                 if (previewable()) preview?.show(this, text.toString())
+                leanGlass(true)
             }
             MotionEvent.ACTION_MOVE -> if (popup != null) {
                 val i = ((e.rawX - popupLeft) / itemW).toInt().coerceIn(0, altViews.lastIndex)
@@ -356,6 +371,7 @@ class KeyView(
             MotionEvent.ACTION_UP -> {
                 removeCallbacks(repeater); removeCallbacks(longPress)
                 animateTo(false)
+                leanGlass(false)
                 preview?.hide(this)
                 if (popup != null) {
                     val pick = alts.getOrNull(altIdx)
@@ -369,6 +385,7 @@ class KeyView(
                 dismissAlts(); pendingUp = false
                 preview?.hide(this)
                 animateTo(false)
+                leanGlass(false)
             }
         }
         return true

@@ -22,7 +22,7 @@ import com.google.android.material.R as MR
 /** Shared design tokens + row builders for every settings page, so pages can't drift apart. */
 class SettingsUi(private val a: Activity) {
     // ---- tokens ----
-    val boxRadius = 26.dp.toFloat()
+    val boxRadius = 28.dp.toFloat()
     val rowPad = 20.dp
     val rowMinH = 76.dp
     private fun color(attr: Int, fb: Int) = MaterialColors.getColor(a, attr, fb)
@@ -31,6 +31,8 @@ class SettingsUi(private val a: Activity) {
     val onSurface get() = color(MR.attr.colorOnSurface, Color.WHITE)
     val onSurfaceVar get() = color(MR.attr.colorOnSurfaceVariant, Color.LTGRAY)
     val primary get() = color(MR.attr.colorPrimary, Color.WHITE)
+    /** Same hairline the keyboard shell uses, so settings cards and the keyboard feel like one product. */
+    val hairline get() = (onSurface and 0x00FFFFFF) or (0x1A shl 24)
     val error get() = color(MR.attr.colorError, Color.RED)
     private val medium: Typeface get() = ResourcesCompat.getFont(a, R.font.gsr_medium) ?: Typeface.create("sans-serif-medium", Typeface.NORMAL)
 
@@ -45,7 +47,7 @@ class SettingsUi(private val a: Activity) {
     /** One rounded container, rows inside, thin inset dividers. */
     fun box(rows: List<View>): View = LinearLayout(a).apply {
         orientation = LinearLayout.VERTICAL
-        background = GradientDrawable().apply { setColor(surface); cornerRadius = boxRadius }
+        background = GradientDrawable().apply { setColor(surface); cornerRadius = boxRadius; setStroke(1.dp, hairline) }
         clipToOutline = true
         val divider = (onSurface and 0x00FFFFFF) or (0x1F shl 24)
         rows.forEachIndexed { i, v ->
@@ -57,7 +59,7 @@ class SettingsUi(private val a: Activity) {
 
     fun button(label: String, filled: Boolean, compact: Boolean = false, onClick: () -> Unit) = MaterialButton(a).apply {
         text = label; setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 13f else 14f); isAllCaps = false
-        cornerRadius = 14.dp; insetTop = 0; insetBottom = 0; minHeight = 0; minimumHeight = 0; minWidth = 0; minimumWidth = 0
+        cornerRadius = 100.dp; insetTop = 0; insetBottom = 0; minHeight = 0; minimumHeight = 0; minWidth = 0; minimumWidth = 0
         setPadding(if (compact) 14.dp else 16.dp, 0, if (compact) 14.dp else 16.dp, 0)
         val bg = if (filled) primary else color(MR.attr.colorSecondaryContainer, Color.DKGRAY)
         val fg = if (filled) color(MR.attr.colorOnPrimary, Color.BLACK) else color(MR.attr.colorOnSecondaryContainer, Color.WHITE)
@@ -186,7 +188,7 @@ class SettingsUi(private val a: Activity) {
             setTextColor(onSurface); setHintTextColor(onSurfaceVar)
             minLines = 2; gravity = Gravity.TOP or Gravity.START
             setPadding(16.dp, 12.dp, 16.dp, 12.dp)
-            background = GradientDrawable().apply { cornerRadius = 16.dp.toFloat(); setColor(inputBg) }
+            background = GradientDrawable().apply { cornerRadius = 20.dp.toFloat(); setColor(inputBg); setStroke(1.dp, hairline) }
         }
         val wrap = LinearLayout(a).apply { setPadding(16.dp, 14.dp, 16.dp, 14.dp); addView(input, LinearLayout.LayoutParams(-1, -2)) }
         return wrap to input

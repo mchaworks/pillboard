@@ -2,6 +2,7 @@ package dev.pillboard.keyboard
 
 import android.content.Context
 import android.graphics.Color
+import android.graphics.PixelFormat
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import androidx.core.content.res.ResourcesCompat
@@ -74,10 +75,15 @@ class PillboardService : InputMethodService() {
     private lateinit var tokens: KbTokens
     private var builtDynamic = true
     private var builtSeed = 0
+    private var builtFx = true
+    /** One glass drawable per built input view: its AGSL layer and light animation are reused across applyBlur() calls. */
+    private var shell: GlassSurfaceDrawable? = null
 
     override fun onCreateInputView(): View {
         builtDynamic = Prefs.dynamic(this)
         builtSeed = Prefs.seedColor(this)
+        builtFx = Prefs.bool(this, "glass_fx", true)
+        shell = null
         themed = ContextThemeWrapper(this, if (builtDynamic) R.style.Theme_Pillboard else R.style.Theme_Pillboard_Static)
         tokens = KbTokens(themed)
         preview = KeyPreview(themed, tokens)
@@ -101,7 +107,7 @@ class PillboardService : InputMethodService() {
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
-        if (Prefs.dynamic(this) != builtDynamic || Prefs.seedColor(this) != builtSeed) setInputView(onCreateInputView())
+        if (Prefs.dynamic(this) != builtDynamic || Prefs.seedColor(this) != builtSeed || Prefs.bool(this, "glass_fx", true) != builtFx) setInputView(onCreateInputView())
         symbols = false
         autoCap()
         applyBlur()
@@ -145,18 +151,23 @@ class PillboardService : InputMethodService() {
      * masked to the shell's corners instead of showing a square blurred slab.
      */
     private fun applyBlur() {
-        val blurRequested = Prefs.bool(this, "blur", false)
+        // "High contrast text" (accessibility) = Reduce Transparency: solid shell, no blur
+        val highContrast = android.provider.Settings.Secure.getInt(contentResolver, "high_text_contrast_enabled", 0) == 1
+        val blurRequested = Prefs.bool(this, "blur", false) && !highContrast
         val blur = blurRequested && blurSupported()
         val fill = when {
             blur -> tokens.glassFillBlur
             blurRequested -> tokens.glassFillNoBlur
             else -> tokens.background
         }
-        root?.background = tokens.shell(fill)
+        val glass = shell?.also { it.setFill(fill) } ?: tokens.shell(fill).also { shell = it }
+        if (root?.background !== glass) root?.background = glass
         window.window?.let { w ->
             if (blur) w.setBackgroundDrawable(GradientDrawable().apply {
                 setColor(0x01000000); cornerRadius = tokens.containerRadius
             }) else w.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            // Android's window-blur docs: the blur is drawn under the window surface, so the window must be translucent
+            if (blur) w.setFormat(PixelFormat.TRANSLUCENT)
             if (Build.VERSION.SDK_INT >= 31) w.setBackgroundBlurRadius(if (blur) tokens.blurRadius else 0)
         }
     }
@@ -191,10 +202,9 @@ class PillboardService : InputMethodService() {
         r.addView(rowOf {
             key(if (symbols) "ABC" else "?123", keyH, 1.35f, KeyStyle.SPECIAL) { symbols = !symbols; render(animateRows = true) }
             key(",", keyH, 0.85f, KeyStyle.SPECIAL) { type(",") }
-            key("space", keyH, 4.45f) { space() }
+            key("space", keyH, 4.45f, KeyStyle.SPECIAL) { space() }
             key(".", keyH, 0.85f, KeyStyle.SPECIAL) { type(".") }
             val action = currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: 0
-            val hasAction = action != EditorInfo.IME_ACTION_NONE && action != EditorInfo.IME_ACTION_UNSPECIFIED
             val (name, ico) = when (action) {
                 EditorInfo.IME_ACTION_GO -> "Go" to R.drawable.ic_arrow_forward
                 EditorInfo.IME_ACTION_SEARCH -> "Search" to R.drawable.ic_search
@@ -203,7 +213,7 @@ class PillboardService : InputMethodService() {
                 EditorInfo.IME_ACTION_NEXT -> "Next" to R.drawable.ic_arrow_forward
                 else -> "Enter" to R.drawable.ic_enter
             }
-            key(name, keyH, 1.5f, if (hasAction) KeyStyle.ACCENT else KeyStyle.SPECIAL, icon = ico) { enter() }
+            key(name, keyH, 1.5f, KeyStyle.ACCENT, icon = ico) { enter() }   // Enter is always the primary action
         })
         updateStrip()
         if (animateRows && animationsOn(this)) {
@@ -228,7 +238,7 @@ class PillboardService : InputMethodService() {
         val rows = 4f + (if (Prefs.bool(this, "numrow", false) && !symbols) 0.8f else 0f)
         val stripH = if (Prefs.bool(this, "suggest", true) && suggestionsAllowed()) 45.dp else 0
         val budget = resources.displayMetrics.heightPixels * 0.55f - stripH - 16.dp - navInset
-        val margins = (2 * Prefs.int(this, "key_gap", 3) + 2).dp
+        val margins = (2 * Prefs.int(this, "key_gap", 3) + 4).dp
         val fit = (budget / rows).toInt() - margins
         return minOf(pref, fit).coerceAtLeast(34.dp)
     }
@@ -246,9 +256,11 @@ class PillboardService : InputMethodService() {
         repeat: Boolean = false, icon: Int = 0, onKey: () -> Unit,
     ): KeyView {
         val g = Prefs.int(this@PillboardService, "key_gap", 3)
-        val lp = LinearLayout.LayoutParams(0, h, w).apply { setMargins(g.dp, (g + 1).dp, g.dp, (g + 1).dp) }
+        // rows breathe more than columns, like iOS 26
+        val lp = LinearLayout.LayoutParams(0, h, w).apply { setMargins(g.dp, (g + 2).dp, g.dp, (g + 2).dp) }
         return KeyView(themed, label, style, tokens, repeat, icon, onKey).also {
             if (Prefs.bool(this@PillboardService, "keypreview", true)) it.preview = preview
+            it.glass = shell
             addView(it, lp)
         }
     }

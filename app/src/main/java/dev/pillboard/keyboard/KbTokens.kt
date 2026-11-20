@@ -6,9 +6,7 @@ import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.StateListDrawable
-import android.view.Gravity
 import androidx.core.graphics.ColorUtils
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.R as MR
@@ -20,7 +18,7 @@ import com.google.android.material.R as MR
  */
 class KbTokens(private val ctx: Context) {
     companion object {
-        const val KEY_R_DEFAULT = 12
+        const val KEY_R_DEFAULT = 10
         /** Shadow room around floating popups (a popup window clips anything outside its bounds). */
         val POPUP_SHADOW_PAD get() = 10.dp
     }
@@ -30,14 +28,14 @@ class KbTokens(private val ctx: Context) {
 
     // ---- geometry ----
     val containerRadius = 30.dp.toFloat()
-    val stripRadius = 18.dp.toFloat()
+    val stripRadius = 20.dp.toFloat()      // near-pill: the strip reads as a capsule inside the shell
     val popupRadius = 20.dp.toFloat()
-    val specialRadiusBoost = 3.dp      // special keys: slightly rounder than letters
-    val actionRadiusBoost = 8.dp       // Enter / active Shift: most expressive shape
-    val pressRadiusBoost = 3.dp        // corner morph while pressed
+    val specialRadiusBoost = 0.dp      // iOS 26: every keycap shares one corner radius
+    val actionRadiusBoost = 2.dp       // Enter / active Shift: a touch rounder
+    val pressRadiusBoost = 2.dp        // corner morph while pressed
 
     // ---- elevation ----
-    val keyElevation = 1.5f * ctx.resources.displayMetrics.density
+    val keyElevation = 1f * ctx.resources.displayMetrics.density
     val popupElevation = 6.dp.toFloat()
 
     // ---- motion (kept lightweight; input never waits on these) ----
@@ -52,12 +50,13 @@ class KbTokens(private val ctx: Context) {
     val popupInMs = 100L
     val fadeOutMs = 70L
     val rowInMs = 140L                 // ?123 <-> ABC page change
-    val blurRadius = 40.dp
+    /** Android's window-blur guidance: ~80px reads well, above ~150px costs real performance. */
+    val blurRadius = minOf(28.dp, 110)
 
     // ---- color: glass belongs to the shell, keycaps stay solid tonal surfaces ----
     // Light theme: shell sits a notch darker so white keycaps separate from it (validated contrast ~1.24:1).
     val background = c(MR.attr.colorSurfaceContainerLow, if (night) 0xFF1C1B1F.toInt() else 0xFFF3EDF7.toInt())
-        .let { if (night) it else tone(it, Color.BLACK, 0.05f) }
+        .let { if (night) tone(it, Color.BLACK, 0.30f) else tone(it, Color.BLACK, 0.05f) }
     val glassFill = ColorUtils.setAlphaComponent(background, if (night) 0xD8 else 0xE8)
     /** Real backdrop blur keeps text legible, so the shell can be more translucent. */
     val glassFillBlur = ColorUtils.setAlphaComponent(background, if (night) 0xB4 else 0xC8)
@@ -65,23 +64,26 @@ class KbTokens(private val ctx: Context) {
     val glassFillNoBlur = ColorUtils.setAlphaComponent(background, 0xF2)
     val glassStroke = ColorUtils.setAlphaComponent(c(MR.attr.colorOutlineVariant, if (night) Color.WHITE else Color.BLACK), if (night) 0x48 else 0x30)
     val glassHighlight = ColorUtils.setAlphaComponent(Color.WHITE, if (night) 0x24 else 0x66)
-    val key = if (night) c(MR.attr.colorSurfaceContainerHighest, 0xFF36343B.toInt())
+    val key = if (night) tone(c(MR.attr.colorSurfaceContainerHighest, 0xFF36343B.toInt()), Color.WHITE, 0.10f)
               else c(MR.attr.colorSurfaceContainerLowest, Color.WHITE)
     val keyText = c(MR.attr.colorOnSurface, if (night) Color.WHITE else Color.BLACK)
     private val seed: Int? = if (Prefs.dynamic(ctx)) null else Prefs.seedColor(ctx)
 
-    val special = seed?.let { ColorUtils.blendARGB(key, it, 0.16f) }
-        ?: c(MR.attr.colorSecondaryContainer, 0xFF4A4458.toInt()).let { if (night) it else tone(it, Color.BLACK, 0.12f) }
-    val specialText = seed?.let { keyText } ?: c(MR.attr.colorOnSecondaryContainer, Color.WHITE)
-    val pressed = seed?.let { ColorUtils.blendARGB(key, it, 0.34f) } ?: c(MR.attr.colorPrimaryContainer, Color.LTGRAY)
-    val pressedText = seed?.let { keyText } ?: c(MR.attr.colorOnPrimaryContainer, Color.BLACK)
+    // iOS 26 direction: neutral gray keycaps (special keys one step darker), accent only for the primary action
+    private val hint = seed ?: c(MR.attr.colorPrimary, 0xFF6750A4.toInt())
+    val special = ColorUtils.blendARGB(tone(key, Color.BLACK, if (night) 0.30f else 0.20f), hint, 0.06f)
+    val specialText = keyText
+    val pressed = if (night) tone(key, Color.WHITE, 0.16f) else tone(key, Color.BLACK, 0.12f)
+    val pressedText = keyText
     val accent = seed ?: c(MR.attr.colorPrimary, Color.BLUE)
     val onAccent = seed?.let { if (ColorUtils.calculateLuminance(it) > 0.5) Color.BLACK else Color.WHITE }
         ?: c(MR.attr.colorOnPrimary, Color.WHITE)
     val keyStroke = ColorUtils.setAlphaComponent(keyText, if (night) 0x22 else 0x18)
+    val accentPressed = tone(accent, Color.BLACK, 0.18f)
 
     // suggestion strip: a faint tonal wash of the text color over the glass, so it belongs to the shell
-    val stripFill = ColorUtils.setAlphaComponent(keyText, if (night) 0x14 else 0x0E)
+    val stripFill = Color.TRANSPARENT          // iOS 26: no capsule, just words and dividers
+    val stripStroke = Color.TRANSPARENT
     val stripPressed = ColorUtils.setAlphaComponent(keyText, 0x24)
     val divider = ColorUtils.setAlphaComponent(keyText, 0x26)
 
@@ -92,32 +94,21 @@ class KbTokens(private val ctx: Context) {
     private fun tone(c: Int, target: Int, r: Float) =
         ColorUtils.setAlphaComponent(ColorUtils.blendARGB(c or 0xFF000000.toInt(), target, r), Color.alpha(c))
 
-    /** Very subtle top-to-bottom tonal sheen for a keycap (dark: lit from above, light: soft underside). */
-    fun sheen(base: Int): IntArray =
-        if (night) intArrayOf(tone(base, Color.WHITE, 0.07f), base) else intArrayOf(base, tone(base, Color.BLACK, 0.05f))
+    /** Keycaps are flat solid surfaces (iOS 26); kept as a two-stop array so morph animations stay generic. */
+    fun sheen(base: Int): IntArray = intArrayOf(base, base)
 
     // ---- shared surfaces ----
-    /** Floating glass shell: tonal gradient, hairline outline and a soft specular edge along the top. */
-    fun shell(fill: Int = glassFill): Drawable {
-        val colors = if (night) intArrayOf(tone(fill, Color.WHITE, 0.06f), fill) else intArrayOf(fill, tone(fill, Color.BLACK, 0.03f))
-        val body = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, colors).apply {
-            cornerRadius = containerRadius
-            setStroke(1.dp, glassStroke)
-        }
-        val edge = GradientDrawable(
-            GradientDrawable.Orientation.LEFT_RIGHT,
-            intArrayOf(ColorUtils.setAlphaComponent(glassHighlight, 0), glassHighlight, ColorUtils.setAlphaComponent(glassHighlight, 0)),
-        )
-        return LayerDrawable(arrayOf(body, edge)).apply {
-            setLayerGravity(1, Gravity.TOP)
-            setLayerHeight(1, 1.dp)
-            setLayerInsetTop(1, 1.dp)
-            setLayerInsetLeft(1, 30.dp)
-            setLayerInsetRight(1, 30.dp)
-        }
-    }
+    /**
+     * Floating glass shell, drawn on Canvas by [GlassSurfaceDrawable]: tonal gradient fill, directional specular rim
+     * and soft upper light (AGSL on API 33+ when "Liquid light" is on, gradients otherwise), plus a hairline outline.
+     * Also supplies the rounded outline used for clipping and for the window-blur mask.
+     */
+    fun shell(fill: Int = glassFill): GlassSurfaceDrawable =
+        GlassSurfaceDrawable(this, containerRadius, fill, GlassSurfaceDrawable.Style.SHELL, Prefs.bool(ctx, "glass_fx", true))
 
-    fun stripBackground(): Drawable = GradientDrawable().apply { setColor(stripFill); cornerRadius = stripRadius }
+    fun stripBackground(): Drawable = GradientDrawable().apply {
+        setColor(stripFill); cornerRadius = stripRadius; setStroke(1.dp, stripStroke)
+    }
 
     fun stripItemBackground(): Drawable = StateListDrawable().apply {
         addState(intArrayOf(android.R.attr.state_pressed), GradientDrawable().apply {
@@ -126,7 +117,7 @@ class KbTokens(private val ctx: Context) {
         addState(intArrayOf(), ColorDrawable(Color.TRANSPARENT))
     }
 
-    fun popupBackground(): Drawable = GradientDrawable().apply {
-        setColor(popupFill); cornerRadius = popupRadius; setStroke(1.dp, glassStroke)
-    }
+    /** Floating popups share the glass renderer (rim + hairline) but stay near-opaque over arbitrary app content. */
+    fun popupBackground(): Drawable =
+        GlassSurfaceDrawable(this, popupRadius, popupFill, GlassSurfaceDrawable.Style.FLOATING, useShader = false)
 }
