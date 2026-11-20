@@ -79,15 +79,15 @@ class SettingsActivity : Activity() {
                     "blur", false, enabled = true)
             },
             Item(Page.APPEARANCE, "Blur status", "blur glass system available blocked") { ui.info("Blur status", blurStatus()) },
-            Item(Page.APPEARANCE, "Liquid light", "glass specular rim shader agsl highlight edge") {
-                ui.toggle("Liquid light",
-                    if (Build.VERSION.SDK_INT >= 33) "Shader-lit glass edge; the light leans toward your touch" else "Needs Android 13+, using gradient edge light",
+            Item(Page.APPEARANCE, "Press glow", "glow light press key shader") {
+                ui.toggle("Press glow",
+                    if (Build.VERSION.SDK_INT >= 33) "The glass lights up around the key you press" else "Needs Android 13+",
                     "glass_fx", true, enabled = Build.VERSION.SDK_INT >= 33, onChange = { refreshPreview() })
             },
             Item(Page.APPEARANCE, "Liquid refraction", "glass refraction edge bevel dispersion bend background shell") {
                 ui.toggle("Liquid refraction",
                     if (Build.VERSION.SDK_INT >= 33) "The glass edge bends the keys near it, with a faint color fringe" else "Needs Android 13+",
-                    "refract", true, enabled = Build.VERSION.SDK_INT >= 33, onChange = { refreshPreview() })
+                    "refract", false, enabled = Build.VERSION.SDK_INT >= 33, onChange = { refreshPreview() })
             },
             Item(Page.APPEARANCE, "Liquid lens", "refraction lens magnifier key preview glass") {
                 ui.toggle("Liquid lens",
@@ -298,7 +298,7 @@ class SettingsActivity : Activity() {
             background = t.shell()
         }
         // same refraction as the real keyboard, so the toggle is visible right here
-        if (Build.VERSION.SDK_INT >= 33) ShellRefraction(card, t.containerRadius).update(Prefs.bool(this, "refract", true))
+        if (Build.VERSION.SDK_INT >= 33) ShellRefraction(card, t.containerRadius).update(Prefs.bool(this, "refract", false))
         if (Prefs.bool(this, "suggest", true)) {
             card.addView(LinearLayout(this).apply {
                 isBaselineAligned = false

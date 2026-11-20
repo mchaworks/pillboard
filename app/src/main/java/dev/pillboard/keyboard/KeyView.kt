@@ -59,10 +59,7 @@ private fun morphFromKey(face: View, lens: LensView?, bw: Int, bh: Int, kw: Int,
     face.alpha = 0f
     face.scaleX = (kw.toFloat() / bw).coerceIn(0.5f, 1f)
     face.scaleY = (kh.toFloat() / bh).coerceIn(0.5f, 1f)
-    lens?.morph = 0f
     face.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(t.popMs).setInterpolator(t.popSpring)
-        .setUpdateListener { lens?.morph = it.animatedFraction.coerceIn(0f, 1f) }
-        .withEndAction { lens?.morph = 1f }
         .start()
 }
 
@@ -95,6 +92,8 @@ class KeyPreview(ctx: Context, private val t: KbTokens) {
         val ww = bw + pad * 2
         val wh = bh + pad * 2
         val loc = IntArray(2); key.getLocationOnScreen(loc)
+        val win = IntArray(2); key.getLocationInWindow(win)
+        val ox = loc[0] - win[0]; val oy = loc[1] - win[1]     // IME window origin on screen
         val screenW = key.resources.displayMetrics.widthPixels
         val bx = (loc[0] + key.width / 2 - bw / 2).coerceIn(2.dp, (screenW - bw - 2.dp).coerceAtLeast(2.dp))
         val x = (bx - pad).coerceAtLeast(0)
@@ -107,12 +106,12 @@ class KeyPreview(ctx: Context, private val t: KbTokens) {
         fading = false
         face.animate().cancel()
         if (p.isShowing) {
-            p.update(x, y, ww, wh)
+            p.update(x - ox, y - oy, ww, wh)
             if (wasSolid) { face.alpha = 1f; face.scaleX = 1f; face.scaleY = 1f; lens?.morph = 1f }
             else morphFromKey(face, lens, bw, bh, key.width, key.height, t, motionOn)
         } else {
             p.width = ww; p.height = wh
-            p.showAtLocation(key, Gravity.NO_GRAVITY, x, y)
+            p.showAtLocation(key, Gravity.NO_GRAVITY, x - ox, y - oy)
             morphFromKey(face, lens, bw, bh, key.width, key.height, t, motionOn)
         }
     }
@@ -317,6 +316,14 @@ class KeyView(
         shape.setStroke(0, Color.TRANSPARENT)   // flat keycaps: no outline
     }
 
+    /**
+     * The gap between keys belongs to the key: the view fills its whole cell and only the drawn shape is inset, so a
+     * tap that lands between two keys still types one (fast thumbs no longer drop letters).
+     */
+    fun setHitInset(x: Int, y: Int) {
+        background = android.graphics.drawable.InsetDrawable(shape, x, y, x, y)
+    }
+
     /** Update in place (no view rebuild), e.g. when Shift changes. */
     fun setKeyStyle(style: KeyStyle) = applyStyle(style, animate = true)
     fun setLabel(l: String) { text = l; contentDescription = l }
@@ -376,6 +383,8 @@ class KeyView(
         }
         val sp = KbTokens.POPUP_SHADOW_PAD
         val loc = IntArray(2); getLocationOnScreen(loc)
+        val win = IntArray(2); getLocationInWindow(win)
+        val ox = loc[0] - win[0]; val oy = loc[1] - win[1]
         val screenW = resources.displayMetrics.widthPixels
         val bx = (loc[0] + width / 2 - bw / 2).coerceIn(4.dp, (screenW - bw - 4.dp).coerceAtLeast(4.dp))
         val by = (loc[1] - bh - 8.dp).coerceAtLeast(sp)
@@ -386,7 +395,7 @@ class KeyView(
         altIdx = 0
         popup = PopupWindow(shadowHolder(context, box), bw + sp * 2, bh + sp * 2, false).apply {
             isTouchable = false
-            showAtLocation(this@KeyView, Gravity.NO_GRAVITY, wx, wy)
+            showAtLocation(this@KeyView, Gravity.NO_GRAVITY, wx - ox, wy - oy)
         }
         popIn(box, bw, bh, t.popupInMs, motionOn)
         highlight()

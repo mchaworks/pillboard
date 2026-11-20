@@ -110,7 +110,7 @@ class KbTokens(private val ctx: Context) {
      * Also supplies the rounded outline used for clipping and for the window-blur mask.
      */
     fun shell(fill: Int = glassFill): GlassSurfaceDrawable =
-        GlassSurfaceDrawable(this, containerRadius, fill, GlassSurfaceDrawable.Style.SHELL, Prefs.bool(ctx, "glass_fx", true))
+        GlassSurfaceDrawable(this, containerRadius, fill, GlassSurfaceDrawable.Style.SHELL, Prefs.bool(ctx, "glass_fx", true))   // real blur or flat tint; optional press glow only
 
     fun stripBackground(): Drawable = GradientDrawable().apply {
         setColor(stripFill); cornerRadius = stripRadius; setStroke(1.dp, stripStroke)

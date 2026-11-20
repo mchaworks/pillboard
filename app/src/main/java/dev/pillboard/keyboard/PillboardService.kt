@@ -167,7 +167,7 @@ class PillboardService : InputMethodService() {
             else -> tokens.background
         }
         // refraction re-samples the shell layer, so it is off for "high contrast text" like the blur
-        refraction?.update(Prefs.bool(this, "refract", true) && !highContrast)
+        refraction?.update(Prefs.bool(this, "refract", false) && !highContrast)
         val glass = shell?.also { it.setFill(fill) } ?: tokens.shell(fill).also { shell = it }
         if (root?.background !== glass) root?.background = glass
         window.window?.let { w ->
@@ -266,8 +266,9 @@ class PillboardService : InputMethodService() {
     ): KeyView {
         val g = Prefs.int(this@PillboardService, "key_gap", 3)
         // rows breathe more than columns, like iOS 26
-        val lp = LinearLayout.LayoutParams(0, h, w).apply { setMargins(g.dp, (g + 2).dp, g.dp, (g + 2).dp) }
+        val lp = LinearLayout.LayoutParams(0, h + 2 * (g + 2).dp, w)
         return KeyView(themed, label, style, tokens, repeat, icon, onKey).also {
+            it.setHitInset(g.dp, (g + 2).dp)
             if (Prefs.bool(this@PillboardService, "keypreview", true)) it.preview = preview
             it.glass = shell
             addView(it, lp)

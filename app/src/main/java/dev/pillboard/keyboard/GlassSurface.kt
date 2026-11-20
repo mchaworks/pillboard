@@ -30,10 +30,6 @@ internal object GlassShader {
         uniform float2 resolution;
         uniform float radius;
         uniform float dpx;
-        uniform float2 lightDir;
-        uniform float intensity;
-        uniform float pool;
-        uniform float gloss;
         uniform float2 touch;
         uniform float touchAmt;
         uniform float touchGlow;
@@ -43,60 +39,13 @@ internal object GlassShader {
             return min(max(q.x, q.y), 0.0) + length(max(q, float2(0.0, 0.0))) - r;
         }
 
-        // thin line hugging the edge (d < 0 is inside): centre 0.4u inside, half width 0.75u
-        float hairAt(float d, float u) {
-            return clamp(1.0 - abs(d + 0.4 * u) / (0.75 * u), 0.0, 1.0);
-        }
-
         half4 main(float2 fragCoord) {
             float2 c = resolution * 0.5;
-            float2 p = fragCoord - c;
-            float d = sdRoundRect(p, c, radius);
+            float d = sdRoundRect(fragCoord - c, c, radius);
             float cov = clamp(0.5 - d / 1.5, 0.0, 1.0);
-            if (cov <= 0.004) {
-                return half4(0.0, 0.0, 0.0, 0.0);
-            }
-
-            float2 g = float2(
-                sdRoundRect(p + float2(1.0, 0.0), c, radius) - sdRoundRect(p - float2(1.0, 0.0), c, radius),
-                sdRoundRect(p + float2(0.0, 1.0), c, radius) - sdRoundRect(p - float2(0.0, 1.0), c, radius));
-            float2 n = g / max(length(g), 0.0001);
-
-            // two symmetric angular lobes, no direction-independent term: the rim is invisible where the
-            // edge normal is perpendicular to the light, like the lit/back edges of iOS 26 glass
-            float facing = dot(n, lightDir);
-            float lobeF = pow(max(facing, 0.0), 4.5);
-            float lobeB = pow(max(-facing, 0.0), 4.5);
-            float lobes = lobeF + lobeB;
-
-            // simulated dispersion: the three channels sit a hair apart across the rim
-            float disp = 0.3 * dpx;
-            float3 hair = float3(hairAt(d + disp, dpx), hairAt(d, dpx), hairAt(d - disp, dpx));
-
-            // inner glow on the lit side only, starting inside the line, fading over ~2.2u
-            float glowIn = clamp((-d - 1.1 * dpx) / (0.75 * dpx), 0.0, 1.0);
-            float glow = glowIn * pow(clamp(1.0 - (-d - 2.2 * dpx) / (2.2 * dpx), 0.0, 1.0), 1.5) * lobeF;
-
-            // very faint broad light pool near the top edge, leaning with the light
-            float ty = fragCoord.y / resolution.y;
-            float tx = fragCoord.x / resolution.x - (0.5 + lightDir.x * 0.5);
-            float soft = (1.0 - smoothstep(0.0, 0.5, ty)) * (1.0 - clamp(abs(tx) * 1.4, 0.0, 1.0)) * pool;
-
-            // reflection: a broad diagonal gloss streak across the shell that slides with the light, plus a fainter twin
-            float2 q = fragCoord / resolution;
-            float k1 = q.x * 0.85 + q.y * 0.55 - (0.50 + lightDir.x * 0.30);
-            float k2 = q.x * 0.85 + q.y * 0.55 - (0.96 + lightDir.x * 0.30);
-            float sheen = (exp(-k1 * k1 / 0.010) + 0.45 * exp(-k2 * k2 / 0.004)) * gloss;
-
-            // the pressed key lights the glass around it (visible in the gaps between keys)
             float2 dt = (fragCoord - touch) / (86.0 * dpx);
-            float lit = exp(-dot(dt, dt)) * touchAmt * touchGlow;
-
-            float3 rgb = (hair * (0.70 * lobes) + float3(glow * 0.10, glow * 0.10, glow * 0.10)) * intensity
-                + float3(soft + sheen + lit, soft + sheen + lit, soft + sheen + lit);
-            rgb = clamp(rgb, 0.0, 1.0) * cov;
-            float a = max(max(rgb.x, rgb.y), rgb.z);
-            return half4(half(rgb.x), half(rgb.y), half(rgb.z), half(a));
+            float lit = exp(-dot(dt, dt)) * touchAmt * touchGlow * cov;
+            return half4(half(lit), half(lit), half(lit), half(lit));
         }
     """
 
@@ -118,16 +67,11 @@ internal class GlassShaderLayer {
     private val shader = RuntimeShader(GlassShader.SRC)
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).also { it.shader = shader }
 
-    fun draw(canvas: Canvas, rect: RectF, radius: Float, density: Float, night: Boolean, lightX: Float, lightY: Float,
+    fun draw(canvas: Canvas, rect: RectF, radius: Float, density: Float, night: Boolean,
              touchX: Float, touchY: Float, touchAmt: Float) {
-        val len = kotlin.math.sqrt(lightX * lightX + lightY * lightY)
         shader.setFloatUniform("resolution", rect.width(), rect.height())
         shader.setFloatUniform("radius", radius)
         shader.setFloatUniform("dpx", density)
-        shader.setFloatUniform("lightDir", lightX / len, lightY / len)
-        shader.setFloatUniform("intensity", if (night) 0.70f else 0.90f)
-        shader.setFloatUniform("pool", if (night) 0.05f else 0.16f)
-        shader.setFloatUniform("gloss", if (night) 0.065f else 0.20f)
         shader.setFloatUniform("touch", touchX, touchY)
         shader.setFloatUniform("touchAmt", touchAmt)
         shader.setFloatUniform("touchGlow", if (night) 0.14f else 0.30f)
@@ -228,7 +172,8 @@ class GlassSurfaceDrawable(
 
         val top: Int
         val bottom: Int
-        if (style == Style.FLOATING) { top = lift(fill, 0.05f); bottom = fill }
+        if (style == Style.SHELL) { top = fill; bottom = fill }
+        else if (style == Style.FLOATING) { top = lift(fill, 0.05f); bottom = fill }
         else if (t.night) { top = lift(fill, 0.06f); bottom = fill }
         else { top = fill; bottom = ColorUtils.blendARGB(fill or 0xFF000000.toInt(), Color.BLACK, 0.03f).let { ColorUtils.setAlphaComponent(it, Color.alpha(fill)) } }
         fillPaint.shader = LinearGradient(0f, 0f, 0f, h.toFloat(), top, bottom, Shader.TileMode.CLAMP)
@@ -270,8 +215,8 @@ class GlassSurfaceDrawable(
 
         val s = shader
         if (s != null && Build.VERSION.SDK_INT >= 33 && canvas.isHardwareAccelerated) {
-            s.draw(canvas, rect, radius, density(), t.night, lightX, LIGHT_Y, touchX, touchY, touchAmt)
-        } else {
+            s.draw(canvas, rect, radius, density(), t.night, touchX, touchY, touchAmt)
+        } else if (style != Style.SHELL) {
             // soft light falling on the upper part of the shell, clipped to the rounded top
             val glowH = minOf(h * 0.55f, 96.dp.toFloat())
             val c2 = canvas.save()
