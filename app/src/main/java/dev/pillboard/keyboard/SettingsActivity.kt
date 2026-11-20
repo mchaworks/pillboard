@@ -3,11 +3,16 @@ package dev.pillboard.keyboard
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
+import android.graphics.Color
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
+import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -17,90 +22,156 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.slider.Slider
+import com.google.android.material.R as MR
 
+/** Material 3 Expressive-style settings: tonal hero, grouped list with varied corner radii, pill buttons. */
 class SettingsActivity : Activity() {
 
     private lateinit var col: LinearLayout
+    private lateinit var status: TextView
+
+    private fun color(attr: Int, fallback: Int) = MaterialColors.getColor(this, attr, fallback)
+    private val surface get() = color(MR.attr.colorSurfaceContainerHigh, 0xFF2B2B2B.toInt())
+    private val blurOk get() = Build.VERSION.SDK_INT >= 31 &&
+        (getSystemService(WINDOW_SERVICE) as WindowManager).isCrossWindowBlurEnabled
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(20.dp, 64.dp, 20.dp, 56.dp)
+            setPadding(16.dp, 56.dp, 16.dp, 56.dp)
         }
-        col.addView(TextView(this).apply { text = "Pillboard"; textSize = 34f; setPadding(4.dp, 0, 0, 4.dp) })
-        col.addView(TextView(this).apply { text = "Rounded. Expressive. A little iOS."; alpha = 0.7f; setPadding(4.dp, 0, 0, 20.dp) })
+        col.addView(hero(), lp(bottom = 8.dp))
 
-        card {
-            button("Enable keyboard") { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
-            button("Switch keyboard") {
-                (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker()
-            }
-        }
-        card {
-            toggle("Haptic feedback", "Vibrate on key press", "haptic", true)
-            toggle("Suggestions", "Show the word bar above the keys", "suggest", true)
-            toggle("Auto-capitalization", "Capitalize the first letter of sentences", "autocap", true)
-            toggle("Double-space period", "Tap space twice to insert \". \"", "dblspace", true)
-        }
-        card {
-            toggle("Blur background", "Experimental. Android 12+ with window blur enabled", "blur", false)
-            sliderRow("Key height", 42, 62, "key_h", 50)
-        }
-        card {
-            addView(EditText(this@SettingsActivity).apply {
-                hint = "Type here to test…"
-                setPadding(8.dp, 8.dp, 8.dp, 8.dp)
-            })
-        }
+        group("Typing",
+            toggle("Suggestions", "Word bar above the keys", "suggest", true),
+            toggle("Auto-capitalization", "Capital letter at the start of sentences", "autocap", true),
+            toggle("Double-space period", "Tap space twice to insert a period", "dblspace", true),
+        )
+        group("Look & feel",
+            toggle("Haptic feedback", "Vibrate on key press", "haptic", true),
+            toggle(
+                "Blur background",
+                if (blurOk) "Frosted glass behind the keyboard" else "Not available on this device",
+                "blur", false, enabled = blurOk,
+            ),
+            sliderRow("Key height", 42, 62, "key_h", 50),
+        )
+        group("Try it", testField())
+
         setContentView(ScrollView(this).apply { addView(col) })
     }
 
-    // ---- tiny UI helpers: Gboard-style rounded cards ----
-    private fun card(build: LinearLayout.() -> Unit) {
-        val bg = GradientDrawable().apply {
-            cornerRadius = 28.dp.toFloat()
-            setColor(MaterialColors.getColor(this@SettingsActivity,
-                com.google.android.material.R.attr.colorSurfaceContainerHigh, 0xFF2B2B2B.toInt()))
+    override fun onResume() {
+        super.onResume()
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        val enabled = imm.enabledInputMethodList.any { it.packageName == packageName }
+        val active = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
+            ?.startsWith(packageName) == true
+        status.text = when {
+            active -> "●  Active keyboard"
+            enabled -> "●  Enabled. Tap Switch to use it"
+            else -> "●  Not enabled yet"
         }
-        col.addView(LinearLayout(this).apply {
+    }
+
+    // ---- building blocks ----
+    private fun lp(bottom: Int = 0) = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = bottom }
+
+    private fun hero(): View {
+        val onC = color(MR.attr.colorOnPrimaryContainer, Color.WHITE)
+        return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = bg
-            setPadding(16.dp, 12.dp, 16.dp, 12.dp)
-            build()
-        }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = 12.dp })
+            setPadding(28.dp, 32.dp, 28.dp, 24.dp)
+            background = GradientDrawable().apply {
+                cornerRadius = 36.dp.toFloat()
+                setColor(color(MR.attr.colorPrimaryContainer, 0xFF4F378B.toInt()))
+            }
+            addView(TextView(context).apply {
+                text = "Pillboard"; textSize = 38f; setTextColor(onC)
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            })
+            addView(TextView(context).apply {
+                text = "Rounded. Expressive. A little iOS."; textSize = 15f; setTextColor(onC); alpha = 0.75f
+                setPadding(0, 4.dp, 0, 16.dp)
+            })
+            status = TextView(context).apply {
+                textSize = 14f; setTextColor(onC)
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                setPadding(0, 0, 0, 20.dp)
+            }
+            addView(status)
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(pill("Enable", color(MR.attr.colorPrimary, Color.WHITE), color(MR.attr.colorOnPrimary, Color.BLACK)) {
+                    startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+                }, LinearLayout.LayoutParams(0, 56.dp, 1f).apply { marginEnd = 4.dp })
+                addView(pill("Switch", color(MR.attr.colorSecondaryContainer, Color.DKGRAY), color(MR.attr.colorOnSecondaryContainer, Color.WHITE)) {
+                    (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker()
+                }, LinearLayout.LayoutParams(0, 56.dp, 1f).apply { marginStart = 4.dp })
+            })
+        }
     }
 
-    private fun LinearLayout.button(label: String, onClick: () -> Unit) {
-        addView(MaterialButton(this@SettingsActivity).apply {
-            text = label
-            setOnClickListener { onClick() }
+    private fun pill(label: String, bg: Int, fg: Int, onClick: () -> Unit) = MaterialButton(this).apply {
+        text = label; textSize = 16f; isAllCaps = false
+        cornerRadius = 100.dp; insetTop = 0; insetBottom = 0
+        backgroundTintList = ColorStateList.valueOf(bg); setTextColor(fg)
+        setOnClickListener { onClick() }
+    }
+
+    /** Header + rows as separate containers: big radius on the outer corners, small between (M3 Expressive grouping). */
+    private fun group(title: String, vararg rows: View) {
+        col.addView(TextView(this).apply {
+            text = title; textSize = 14f; setTextColor(color(MR.attr.colorPrimary, Color.WHITE))
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            setPadding(16.dp, 24.dp, 0, 8.dp)
         })
+        val big = 26.dp.toFloat(); val small = 6.dp.toFloat()
+        rows.forEachIndexed { i, v ->
+            val t = if (i == 0) big else small
+            val b = if (i == rows.lastIndex) big else small
+            v.background = GradientDrawable().apply {
+                setColor(surface); cornerRadii = floatArrayOf(t, t, t, t, b, b, b, b)
+            }
+            col.addView(v, lp(bottom = if (i == rows.lastIndex) 0 else 3.dp))
+        }
     }
 
-    private fun LinearLayout.toggle(title: String, sub: String, key: String, def: Boolean) {
-        val row = LinearLayout(this@SettingsActivity).apply {
+    private fun toggle(title: String, sub: String, key: String, def: Boolean, enabled: Boolean = true): View {
+        val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 8.dp, 0, 8.dp)
+            setPadding(22.dp, 16.dp, 18.dp, 16.dp)
         }
-        val texts = LinearLayout(this@SettingsActivity).apply { orientation = LinearLayout.VERTICAL }
-        texts.addView(TextView(this@SettingsActivity).apply { text = title; textSize = 17f })
-        texts.addView(TextView(this@SettingsActivity).apply { text = sub; textSize = 13f; alpha = 0.65f })
+        val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        texts.addView(TextView(this).apply { text = title; textSize = 17f })
+        texts.addView(TextView(this).apply { text = sub; textSize = 13f; alpha = 0.65f })
         row.addView(texts, LinearLayout.LayoutParams(0, -2, 1f))
-        row.addView(MaterialSwitch(this@SettingsActivity).apply {
-            isChecked = Prefs.bool(this@SettingsActivity, key, def)
+        val sw = MaterialSwitch(this).apply {
+            isChecked = enabled && Prefs.bool(this@SettingsActivity, key, def)
+            isEnabled = enabled
             setOnCheckedChangeListener { _, v -> Prefs.setBool(this@SettingsActivity, key, v) }
-        })
-        addView(row)
+        }
+        row.addView(sw)
+        if (enabled) row.setOnClickListener { sw.toggle() } else row.alpha = 0.5f
+        return row
     }
 
-    private fun LinearLayout.sliderRow(title: String, from: Int, to: Int, key: String, def: Int) {
-        addView(TextView(this@SettingsActivity).apply { text = "$title (dp)"; textSize = 17f; setPadding(0, 8.dp, 0, 0) })
-        addView(Slider(this@SettingsActivity).apply {
-            valueFrom = from.toFloat(); valueTo = to.toFloat(); stepSize = 2f
-            value = Prefs.int(this@SettingsActivity, key, def).toFloat().coerceIn(valueFrom, valueTo)
-            addOnChangeListener { _, v, _ -> Prefs.setInt(this@SettingsActivity, key, v.toInt()) }
-        })
+    private fun sliderRow(title: String, from: Int, to: Int, key: String, def: Int): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(22.dp, 16.dp, 22.dp, 8.dp)
+            addView(TextView(context).apply { text = "$title (dp)"; textSize = 17f })
+            addView(Slider(context).apply {
+                valueFrom = from.toFloat(); valueTo = to.toFloat(); stepSize = 2f
+                value = Prefs.int(context, key, def).toFloat().coerceIn(valueFrom, valueTo)
+                addOnChangeListener { _, v, _ -> Prefs.setInt(context, key, v.toInt()) }
+            })
+        }
+
+    private fun testField(): View = LinearLayout(this).apply {
+        setPadding(22.dp, 8.dp, 22.dp, 8.dp)
+        addView(EditText(context).apply { hint = "Type here to test…" }, LinearLayout.LayoutParams(-1, -2))
     }
 }

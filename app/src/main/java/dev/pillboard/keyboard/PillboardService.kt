@@ -3,6 +3,7 @@ package dev.pillboard.keyboard
 import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
 import android.inputmethodservice.InputMethodService
 import android.os.Build
 import android.os.SystemClock
@@ -13,6 +14,7 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.LinearLayout
@@ -58,21 +60,29 @@ class PillboardService : InputMethodService() {
     }
 
     private fun applyPadding() {
-        root?.setPadding(4.dp, 6.dp, 4.dp, 8.dp + navInset)
+        root?.setPadding(6.dp, 8.dp, 6.dp, 8.dp + navInset)
     }
 
-    /** Experimental: needs Android 12+ and "window blurs" enabled on the device. */
+    private fun blurSupported() = Build.VERSION.SDK_INT >= 31 &&
+        (getSystemService(WINDOW_SERVICE) as WindowManager).isCrossWindowBlurEnabled
+
+    /**
+     * iOS 26-style rounded top corners ("concentric" with the screen). Blur is only used when the
+     * device really supports it; otherwise the background stays fully opaque (no see-through).
+     */
     private fun applyBlur() {
-        val on = Prefs.bool(this, "blur", false)
+        val blur = Prefs.bool(this, "blur", false) && blurSupported()
         val base = themed.getColor(R.color.kb_bg)
-        root?.setBackgroundColor(if (on) (base and 0x00FFFFFF) or (0xB3 shl 24) else base)
-        if (Build.VERSION.SDK_INT >= 31) {
-            window.window?.let { w ->
-                if (on) {
-                    w.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-                    w.setBackgroundBlurRadius(60.dp)
-                } else w.setBackgroundBlurRadius(0)
-            }
+        val fill = if (blur) (base and 0x00FFFFFF) or (0xB0 shl 24) else base
+        val r = 28.dp.toFloat()
+        fun shape() = GradientDrawable().apply {
+            setColor(fill)
+            cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+        }
+        root?.background = if (blur) null else shape()
+        window.window?.let { w ->
+            w.setBackgroundDrawable(if (blur) shape() else ColorDrawable(Color.TRANSPARENT))
+            if (Build.VERSION.SDK_INT >= 31) w.setBackgroundBlurRadius(if (blur) 70.dp else 0)
         }
     }
 
@@ -159,7 +169,10 @@ class PillboardService : InputMethodService() {
     private fun buildStrip() = LinearLayout(themed).apply {
         orientation = LinearLayout.HORIZONTAL
         layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 40.dp)
-        repeat(3) {
+        repeat(3) { i ->
+            if (i > 0) addView(View(themed).apply {
+                setBackgroundColor((themed.getColor(R.color.kb_key_text) and 0x00FFFFFF) or (0x33 shl 24))
+            }, LinearLayout.LayoutParams(1.dp, 18.dp).apply { gravity = Gravity.CENTER_VERTICAL })
             addView(TextView(themed).apply {
                 gravity = Gravity.CENTER
                 textSize = 16f
@@ -179,7 +192,7 @@ class PillboardService : InputMethodService() {
         val word = currentWord()
         val list = Suggestions.forPrefix(word)
         for (i in 0 until 3) {
-            val tv = s.getChildAt(i) as TextView
+            val tv = s.getChildAt(i * 2) as TextView
             val sug = list.getOrNull(i)
             tv.text = sug ?: ""
             tv.setOnClickListener(if (sug == null) null else View.OnClickListener {

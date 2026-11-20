@@ -27,7 +27,9 @@ class KeyView(
     private val onKey: () -> Unit,
 ) : TextView(context) {
 
-    private val restRadius = 9.dp.toFloat()
+    private val restRadius = 12.dp.toFloat()
+    private var fill = 0
+    private var pressedFill = 0
     private val shape = GradientDrawable()
     private var morph: ValueAnimator? = null
     private val repeater = object : Runnable {
@@ -41,11 +43,13 @@ class KeyView(
         val primary = MaterialColors.getColor(context, com.google.android.material.R.attr.colorPrimary, Color.BLUE)
         val onPrimary = MaterialColors.getColor(context, com.google.android.material.R.attr.colorOnPrimary, Color.WHITE)
         val ink = context.getColor(R.color.kb_key_text)
+        val container = MaterialColors.getColor(context, com.google.android.material.R.attr.colorPrimaryContainer, Color.LTGRAY)
         when (style) {
-            KeyStyle.LETTER -> { shape.setColor(context.getColor(R.color.kb_key)); setTextColor(ink) }
-            KeyStyle.SPECIAL -> { shape.setColor(context.getColor(R.color.kb_key_special)); setTextColor(ink) }
-            KeyStyle.ACCENT -> { shape.setColor(primary); setTextColor(onPrimary) }
+            KeyStyle.LETTER -> { fill = context.getColor(R.color.kb_key); pressedFill = container; setTextColor(ink) }
+            KeyStyle.SPECIAL -> { fill = context.getColor(R.color.kb_key_special); pressedFill = container; setTextColor(ink) }
+            KeyStyle.ACCENT -> { fill = primary; pressedFill = primary; setTextColor(onPrimary) }
         }
+        shape.setColor(fill)
         textSize = if (label.length == 1 && style != KeyStyle.ACCENT) 22f else 15f
         shape.cornerRadius = restRadius
         background = shape
@@ -54,6 +58,7 @@ class KeyView(
 
     private fun animateTo(down: Boolean) {
         morph?.cancel()
+        shape.setColor(if (down) pressedFill else fill)
         val target = if (down) height / 2f else restRadius
         morph = ValueAnimator.ofFloat(shape.cornerRadius, target).apply {
             duration = if (down) 90 else 220
