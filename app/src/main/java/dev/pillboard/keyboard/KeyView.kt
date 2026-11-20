@@ -152,6 +152,12 @@ class KeyView(
     /** Returns long-press alternates for the key's current label (empty = none). */
     var altsFor: ((String) -> List<String>)? = null
     var onAlt: ((String) -> Unit)? = null
+    /** Space-bar cursor slide: called with whole steps (+ right, - left). Non-null makes the key type on release. */
+    var onSlide: ((Int) -> Unit)? = null
+    var onSlideState: ((Boolean) -> Unit)? = null
+    private var downX = 0f
+    private var slideX = 0f
+    private var sliding = false
     /** Shared character-preview bubble; null disables previews (e.g. in the settings preview). */
     var preview: KeyPreview? = null
     var iconSize = 22.dp
@@ -443,7 +449,11 @@ class KeyView(
                     onKey(); postDelayed(repeater, 400)
                 } else {
                     alts = altsFor?.invoke(text.toString()) ?: emptyList()
-                    if (alts.isEmpty()) onKey() else { pendingUp = true; postDelayed(longPress, 350) }
+                    when {
+                        onSlide != null -> { pendingUp = true; downX = e.x }   // types on release unless it became a slide
+                        alts.isEmpty() -> onKey()
+                        else -> { pendingUp = true; postDelayed(longPress, 350) }
+                    }
                 }
                 // 2) then feedback
                 animateTo(true, e.x, e.y)
@@ -454,9 +464,23 @@ class KeyView(
             MotionEvent.ACTION_MOVE -> if (popup != null) {
                 val i = ((e.rawX - popupLeft) / itemW).toInt().coerceIn(0, altViews.lastIndex)
                 if (i != altIdx) { altIdx = i; highlight() }
+            } else onSlide?.let { slide ->
+                if (!sliding && Math.abs(e.x - downX) > 10.dp) {
+                    sliding = true; pendingUp = false; slideX = e.x
+                    onSlideState?.invoke(true)
+                }
+                if (sliding) {
+                    val n = ((e.x - slideX) / 14.dp).toInt()          // one character per 14dp
+                    if (n != 0) {
+                        slideX += n * 14.dp
+                        slide(n)
+                        if (Prefs.bool(context, "haptic", true)) performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                    }
+                }
             }
             MotionEvent.ACTION_UP -> {
                 removeCallbacks(repeater); removeCallbacks(longPress)
+                if (sliding) { sliding = false; onSlideState?.invoke(false) }
                 animateTo(false)
                 leanGlass(false)
                 preview?.hide(this)
@@ -469,6 +493,7 @@ class KeyView(
             }
             MotionEvent.ACTION_CANCEL -> {
                 removeCallbacks(repeater); removeCallbacks(longPress)
+                if (sliding) { sliding = false; onSlideState?.invoke(false) }
                 dismissAlts(); pendingUp = false
                 preview?.hide(this)
                 animateTo(false)

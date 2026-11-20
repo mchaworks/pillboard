@@ -210,7 +210,12 @@ class PillboardService : InputMethodService() {
         r.addView(rowOf {
             key(if (symbols) "ABC" else "123", keyH, 1.35f, KeyStyle.SPECIAL) { symbols = !symbols; render(animateRows = true) }
             key(",", keyH, 0.85f, KeyStyle.SPECIAL) { type(",") }
-            key("space", keyH, 4.45f, KeyStyle.SPECIAL) { space() }
+            key("space", keyH, 4.45f, KeyStyle.SPECIAL) { space() }.also { sp ->
+                if (Prefs.bool(this@PillboardService, "spaceslide", true)) {
+                    sp.onSlide = { n -> moveCursor(n) }
+                    sp.onSlideState = { on -> letterKeys.forEach { it.animate().alpha(if (on) 0.35f else 1f).setDuration(120).start() } }
+                }
+            }
             key(".", keyH, 0.85f, KeyStyle.SPECIAL) { type(".") }
             val action = currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: 0
             // iOS: the action key is a word, not an icon ("return" in lowercase, the editor actions capitalised)
@@ -388,6 +393,14 @@ class PillboardService : InputMethodService() {
     }
 
     // ---- actions ----
+    /** Space-bar slide: move the cursor [n] characters (negative = left). */
+    private fun moveCursor(n: Int) {
+        lastFix = null
+        val code = if (n < 0) KeyEvent.KEYCODE_DPAD_LEFT else KeyEvent.KEYCODE_DPAD_RIGHT
+        repeat(Math.abs(n)) { sendDownUpKeyEvents(code) }
+        updateStrip()
+    }
+
     private fun type(s: String) {
         lastFix = null
         currentInputConnection?.commitText(s, 1)
