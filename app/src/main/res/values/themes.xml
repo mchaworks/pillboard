@@ -1,0 +1,4 @@
+<resources>
+    <style name="Theme.Pillboard" parent="Theme.Material3.DynamicColors.DayNight" />
+    <style name="Theme.Pillboard.App" parent="Theme.Material3.DynamicColors.DayNight.NoActionBar" />
+</resources>

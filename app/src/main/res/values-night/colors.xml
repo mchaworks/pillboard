@@ -1,0 +1,7 @@
+<resources>
+    <color name="kb_bg">#1C1C1E</color>
+    <color name="kb_key">#5B5B5F</color>
+    <color name="kb_key_special">#3A3A3D</color>
+    <color name="kb_key_text">#FFFFFF</color>
+    <color name="ic_bg">#6750A4</color>
+</resources>
