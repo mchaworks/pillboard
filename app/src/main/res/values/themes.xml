@@ -1,4 +1,7 @@
 <resources>
     <style name="Theme.Pillboard" parent="Theme.Material3.DynamicColors.DayNight" />
     <style name="Theme.Pillboard.App" parent="Theme.Material3.DynamicColors.DayNight.NoActionBar" />
+    <!-- Used when "Material You colors" is off: fixed Material 3 baseline palette -->
+    <style name="Theme.Pillboard.Static" parent="Theme.Material3.DayNight" />
+    <style name="Theme.Pillboard.App.Static" parent="Theme.Material3.DayNight.NoActionBar" />
 </resources>

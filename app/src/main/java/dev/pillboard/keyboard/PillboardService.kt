@@ -24,6 +24,21 @@ import androidx.core.view.WindowInsetsCompat
 
 class PillboardService : InputMethodService() {
 
+    private companion object {
+        /** Long-press alternates (lowercase keys). */
+        val ALTS = mapOf(
+            "a" to listOf("à", "á", "â", "ä", "ã", "å"),
+            "e" to listOf("è", "é", "ê", "ë"),
+            "i" to listOf("î", "ï", "í", "ì"),
+            "o" to listOf("ô", "ö", "ò", "ó", "õ"),
+            "u" to listOf("û", "ü", "ù", "ú"),
+            "c" to listOf("ç"),
+            "n" to listOf("ñ"),
+            "s" to listOf("ß"),
+            "y" to listOf("ÿ"),
+        )
+    }
+
     private enum class Shift { OFF, ON, LOCK }
 
     private var shift = Shift.OFF
@@ -31,11 +46,19 @@ class PillboardService : InputMethodService() {
     private var lastShiftTap = 0L
     private var root: LinearLayout? = null
     private var strip: LinearLayout? = null
+    private val letterKeys = mutableListOf<KeyView>()
+    private var shiftKey: KeyView? = null
     private var navInset = 0
     private lateinit var themed: Context
+    private lateinit var tokens: KbTokens
+    private var builtDynamic = true
+    private var builtPreset = 0
 
     override fun onCreateInputView(): View {
-        themed = ContextThemeWrapper(this, R.style.Theme_Pillboard)
+        builtDynamic = Prefs.dynamic(this)
+        builtPreset = Prefs.preset(this)
+        themed = ContextThemeWrapper(this, if (builtDynamic) R.style.Theme_Pillboard else R.style.Theme_Pillboard_Static)
+        tokens = KbTokens(themed)
         val r = LinearLayout(themed).apply { orientation = LinearLayout.VERTICAL }
         root = r
         // Keep keys clear of the system navigation bar (fixes overlap on edge-to-edge Android 15+)
@@ -52,6 +75,7 @@ class PillboardService : InputMethodService() {
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        if (Prefs.dynamic(this) != builtDynamic || Prefs.preset(this) != builtPreset) setInputView(onCreateInputView())
         symbols = false
         autoCap()
         applyBlur()
@@ -72,7 +96,7 @@ class PillboardService : InputMethodService() {
      */
     private fun applyBlur() {
         val blur = Prefs.bool(this, "blur", false) && blurSupported()
-        val base = themed.getColor(R.color.kb_bg)
+        val base = tokens.background
         val fill = if (blur) (base and 0x00FFFFFF) or (0xB0 shl 24) else base
         val r = 28.dp.toFloat()
         fun shape() = GradientDrawable().apply {
@@ -90,6 +114,7 @@ class PillboardService : InputMethodService() {
     private fun render() {
         val r = root ?: return
         r.removeAllViews()
+        letterKeys.clear(); shiftKey = null
         val keyH = Prefs.int(this, "key_h", 50).dp
 
         strip = if (Prefs.bool(this, "suggest", true) && suggestionsAllowed()) buildStrip().also { r.addView(it) } else null
@@ -98,8 +123,7 @@ class PillboardService : InputMethodService() {
             r.addView(rowOf { chars("qwertyuiop", keyH) })
             r.addView(rowOf { gap(0.5f); chars("asdfghjkl", keyH); gap(0.5f) })
             r.addView(rowOf {
-                val glyph = when (shift) { Shift.OFF -> "⇧"; Shift.ON -> "⬆"; Shift.LOCK -> "⇪" }
-                key(glyph, keyH, 1.5f, if (shift == Shift.OFF) KeyStyle.SPECIAL else KeyStyle.LETTER) { onShift() }
+                shiftKey = key(shiftGlyph(), keyH, 1.5f, if (shift == Shift.OFF) KeyStyle.SPECIAL else KeyStyle.LETTER) { onShift() }
                 chars("zxcvbnm", keyH)
                 key("⌫", keyH, 1.5f, KeyStyle.SPECIAL, repeat = true) { backspace() }
             })
@@ -140,9 +164,9 @@ class PillboardService : InputMethodService() {
     private fun LinearLayout.key(
         label: String, h: Int, w: Float = 1f, style: KeyStyle = KeyStyle.LETTER,
         repeat: Boolean = false, onKey: () -> Unit,
-    ) {
+    ): KeyView {
         val lp = LinearLayout.LayoutParams(0, h, w).apply { setMargins(3.dp, 4.dp, 3.dp, 4.dp) }
-        addView(KeyView(themed, label, style, repeat, onKey), lp)
+        return KeyView(themed, label, style, tokens, repeat, onKey).also { addView(it, lp) }
     }
 
     private fun LinearLayout.gap(w: Float) = addView(View(themed), LinearLayout.LayoutParams(0, 1, w))
@@ -150,7 +174,32 @@ class PillboardService : InputMethodService() {
     private fun LinearLayout.chars(s: String, h: Int, w: Float = 1f) {
         for (c in s) {
             val shown = if (shift != Shift.OFF && !symbols) c.uppercaseChar() else c
-            key(shown.toString(), h, w) { type(shown.toString()) }
+            val holder = arrayOfNulls<KeyView>(1)
+            holder[0] = key(shown.toString(), h, w) { type(holder[0]!!.text.toString()) }
+            if (!symbols) {
+                val kv = holder[0]!!
+                letterKeys.add(kv)
+                kv.altsFor = { l ->
+                    val base = l.lowercase()
+                    ALTS[base]?.map { if (l != base) it.uppercase() else it } ?: emptyList()
+                }
+                kv.onAlt = { type(it) }
+            }
+        }
+    }
+
+    private fun shiftGlyph() = when (shift) { Shift.OFF -> "⇧"; Shift.ON -> "⬆"; Shift.LOCK -> "⇪" }
+
+    /** Shift changed: relabel keys in place. Never rebuild views while the user is typing. */
+    private fun updateShiftUi() {
+        if (symbols) return
+        letterKeys.forEach {
+            val l = it.text.toString()
+            it.setLabel(if (shift != Shift.OFF) l.uppercase() else l.lowercase())
+        }
+        shiftKey?.let {
+            it.setLabel(shiftGlyph())
+            it.setKeyStyle(if (shift == Shift.OFF) KeyStyle.SPECIAL else KeyStyle.LETTER)
         }
     }
 
@@ -171,13 +220,13 @@ class PillboardService : InputMethodService() {
         layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 40.dp)
         repeat(3) { i ->
             if (i > 0) addView(View(themed).apply {
-                setBackgroundColor((themed.getColor(R.color.kb_key_text) and 0x00FFFFFF) or (0x33 shl 24))
+                setBackgroundColor((tokens.keyText and 0x00FFFFFF) or (0x33 shl 24))
             }, LinearLayout.LayoutParams(1.dp, 18.dp).apply { gravity = Gravity.CENTER_VERTICAL })
             addView(TextView(themed).apply {
                 gravity = Gravity.CENTER
                 textSize = 16f
                 maxLines = 1
-                setTextColor(themed.getColor(R.color.kb_key_text))
+                setTextColor(tokens.keyText)
             }, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
         }
     }
@@ -243,7 +292,7 @@ class PillboardService : InputMethodService() {
             else -> Shift.ON
         }
         lastShiftTap = now
-        render()
+        updateShiftUi()
     }
 
     private fun nextKeyboard() {
@@ -264,6 +313,7 @@ class PillboardService : InputMethodService() {
     private fun afterEdit() {
         val prev = shift
         autoCap()
-        if (prev != shift) render() else updateStrip()
+        if (prev != shift) updateShiftUi()
+        updateStrip()
     }
 }
