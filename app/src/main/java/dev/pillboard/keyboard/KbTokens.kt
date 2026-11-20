@@ -8,8 +8,8 @@ import com.google.android.material.color.MaterialColors
 import com.google.android.material.R as MR
 
 /** One place for every keyboard color. Resolved from the (dynamic or static) Material theme of [ctx]. */
-class KbTokens(ctx: Context) {
-    private fun c(attr: Int, fb: Int) = MaterialColors.getColor(ctx, attr, fb)
+class KbTokens(private val ctx: Context) {
+    private fun c(attr: Int, fb: Int): Int = MaterialColors.getColor(ctx, attr, fb)
     private val night = ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
 
     val background = c(MR.attr.colorSurfaceContainerLow, if (night) 0xFF1C1B1F.toInt() else 0xFFF3EDF7.toInt())
