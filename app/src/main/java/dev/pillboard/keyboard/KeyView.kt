@@ -1,5 +1,7 @@
 package dev.pillboard.keyboard
 
+import android.animation.ArgbEvaluator
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.res.Resources
@@ -12,7 +14,6 @@ import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.animation.DecelerateInterpolator
-import android.view.animation.OvershootInterpolator
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.PopupWindow
@@ -23,7 +24,7 @@ val Int.dp: Int get() = (this * Resources.getSystem().displayMetrics.density).to
 
 enum class KeyStyle { LETTER, SPECIAL, ACCENT, ACTIVE }
 
-private fun animationsOn(c: Context) =
+internal fun animationsOn(c: Context) =
     Settings.Global.getFloat(c.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) != 0f
 
 /** Wraps [bubble] in a transparent, padded holder so its elevation shadow isn't clipped by the popup window. */
@@ -61,6 +62,7 @@ class KeyPreview(ctx: Context, private val t: KbTokens) {
     private val holder = shadowHolder(ctx, bubble)
     private var popup: PopupWindow? = null
     private var owner: View? = null
+    private var fading = false
 
     fun show(key: View, glyph: String) {
         val pad = KbTokens.POPUP_SHADOW_PAD
@@ -76,8 +78,13 @@ class KeyPreview(ctx: Context, private val t: KbTokens) {
         bubble.text = glyph
         owner = key
         val p = popup ?: PopupWindow(holder, ww, wh, false).also { it.isTouchable = false; popup = it }
+        val wasSolid = p.isShowing && !fading
+        fading = false
+        bubble.animate().cancel()
         if (p.isShowing) {
             p.update(x, y, ww, wh)
+            if (wasSolid) { bubble.alpha = 1f; bubble.scaleX = 1f; bubble.scaleY = 1f }
+            else popIn(bubble, bw, bh, t.popupInMs, motionOn)
         } else {
             p.width = ww; p.height = wh
             p.showAtLocation(key, Gravity.NO_GRAVITY, x, y)
@@ -88,10 +95,16 @@ class KeyPreview(ctx: Context, private val t: KbTokens) {
     /** Hide only if [key] is the one currently shown (fast typing can overlap presses). */
     fun hide(key: View) { if (owner === key) dismiss() }
 
-    fun dismiss() {
+    /** Quick fade-out unless [immediate]; a new [show] cancels the fade, so rolling typing never flickers. */
+    fun dismiss(immediate: Boolean = false) {
         owner = null
         bubble.animate().cancel()
-        popup?.dismiss()
+        val p = popup ?: return
+        if (immediate || !motionOn || !p.isShowing) { fading = false; p.dismiss(); return }
+        fading = true
+        bubble.animate().alpha(0f).setDuration(t.fadeOutMs).withEndAction {
+            if (fading) { fading = false; p.dismiss() }
+        }.start()
     }
 }
 
@@ -127,6 +140,10 @@ class KeyView(
     private var ink = 0
     private var pressedInk = 0
     private var icon: Drawable? = null
+    private var restColors = IntArray(2)
+    private val downColors = IntArray(2)
+    private var morph: ValueAnimator? = null
+    private val argb = ArgbEvaluator()
     private val shape = GradientDrawable()
     private val motionOn = animationsOn(context)
 
@@ -160,7 +177,9 @@ class KeyView(
         KeyStyle.ACCENT, KeyStyle.ACTIVE -> baseRadius + t.actionRadiusBoost
     }
 
-    private fun applyStyle(style: KeyStyle) {
+    private fun applyStyle(style: KeyStyle, animate: Boolean = false) {
+        val oldColors = restColors
+        val oldRadius = shape.cornerRadius
         currentStyle = style
         when (style) {
             KeyStyle.LETTER -> { fill = t.key; ink = t.keyText }
@@ -171,15 +190,50 @@ class KeyView(
         pressedFill = t.pressed
         pressedInk = t.pressedText
         rest = radiusFor(style)
+        restColors = t.sheen(fill)          // cached: no allocation on every release
+        downColors[0] = pressedFill; downColors[1] = pressedFill
+        morph?.cancel()
         paint(false)
+        shape.cornerRadius = rest
         setTextColor(ink)
         icon?.setTint(ink)
+        if (animate && motionOn && isAttachedToWindow && width > 0) morphFrom(oldColors, oldRadius)
         invalidate()
     }
 
+    /** Organic style change (e.g. Shift): tone and corner radius flow to the new state instead of snapping. */
+    private fun morphFrom(oldColors: IntArray, oldRadius: Float) {
+        val newColors = restColors
+        shape.setColors(oldColors); shape.cornerRadius = oldRadius
+        morph = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = t.morphMs
+            interpolator = t.spring
+            addUpdateListener {
+                val f = it.animatedFraction
+                shape.setColors(intArrayOf(
+                    argb.evaluate(f, oldColors[0], newColors[0]) as Int,
+                    argb.evaluate(f, oldColors[1], newColors[1]) as Int))
+                shape.cornerRadius = oldRadius + (rest - oldRadius) * f
+            }
+            start()
+        }
+    }
+
+    private fun morphRadius(to: Float, ms: Long) {
+        morph?.cancel()
+        val from = shape.cornerRadius
+        if (!motionOn || ms == 0L || from == to) { shape.cornerRadius = to; return }
+        morph = ValueAnimator.ofFloat(from, to).apply {
+            duration = ms
+            interpolator = android.view.animation.DecelerateInterpolator()
+            addUpdateListener { shape.cornerRadius = it.animatedValue as Float }
+            start()
+        }
+    }
+
     private fun paint(down: Boolean) {
-        shape.setColors(if (down) intArrayOf(pressedFill, pressedFill) else t.sheen(fill))
-        shape.cornerRadius = if (down) rest + t.pressRadiusBoost else rest
+        shape.setColors(if (down) downColors else restColors)
+        if (down) shape.cornerRadius = rest + t.pressRadiusBoost   // release morphs back via morphRadius()
         shape.setStroke(1.dp, when {
             down -> t.glassHighlight
             currentStyle == KeyStyle.LETTER -> t.keyStroke
@@ -188,7 +242,7 @@ class KeyView(
     }
 
     /** Update in place (no view rebuild), e.g. when Shift changes. */
-    fun setKeyStyle(style: KeyStyle) = applyStyle(style)
+    fun setKeyStyle(style: KeyStyle) = applyStyle(style, animate = true)
     fun setLabel(l: String) { text = l; contentDescription = l }
 
     /** Show a vector icon instead of text; [desc] is the accessibility label. */
@@ -212,7 +266,9 @@ class KeyView(
 
     private fun animateTo(down: Boolean) {
         // Color first, instantly: input never waits on animation.
+        morph?.cancel()
         paint(down)
+        if (!down) morphRadius(rest, t.radiusReleaseMs)
         setTextColor(if (down) pressedInk else ink)
         icon?.setTint(if (down) pressedInk else ink)
         invalidate()
@@ -220,7 +276,7 @@ class KeyView(
         animate().cancel()
         if (!motionOn) { scaleX = sc; scaleY = sc; return }
         animate().scaleX(sc).scaleY(sc).setDuration(if (down) t.pressMs else t.releaseMs)
-            .setInterpolator(if (down) null else OvershootInterpolator(t.releaseOvershoot)).start()
+            .setInterpolator(if (down) null else t.spring).start()
     }
 
     // ---- long-press alternates ----
@@ -281,16 +337,17 @@ class KeyView(
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 parent?.requestDisallowInterceptTouchEvent(true)
-                animateTo(true)
-                if (Prefs.bool(context, "haptic", true)) performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                // 1) input first: nothing visual may ever sit in front of the commit
                 if (repeats) {
                     onKey(); postDelayed(repeater, 400)
                 } else {
                     alts = altsFor?.invoke(text.toString()) ?: emptyList()
                     if (alts.isEmpty()) onKey() else { pendingUp = true; postDelayed(longPress, 350) }
-                    // After the commit: the preview can never delay input.
-                    if (previewable()) preview?.show(this, text.toString())
                 }
+                // 2) then feedback
+                animateTo(true)
+                if (Prefs.bool(context, "haptic", true)) performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                if (previewable()) preview?.show(this, text.toString())
             }
             MotionEvent.ACTION_MOVE -> if (popup != null) {
                 val i = ((e.rawX - popupLeft) / itemW).toInt().coerceIn(0, altViews.lastIndex)

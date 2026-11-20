@@ -13,6 +13,7 @@ import android.view.ContextThemeWrapper
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
+import android.view.animation.DecelerateInterpolator
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.WindowManager
@@ -93,6 +94,7 @@ class PillboardService : InputMethodService() {
         }
         applyPadding()
         applyBlur()
+        watchBlur()
         render()
         return r
     }
@@ -108,7 +110,7 @@ class PillboardService : InputMethodService() {
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
-        preview?.dismiss()
+        preview?.dismiss(immediate = true)
         super.onFinishInputView(finishingInput)
     }
 
@@ -119,29 +121,52 @@ class PillboardService : InputMethodService() {
     private fun blurSupported() = Build.VERSION.SDK_INT >= 31 &&
         (getSystemService(WINDOW_SERVICE) as WindowManager).isCrossWindowBlurEnabled
 
+    private var blurListener: java.util.function.Consumer<Boolean>? = null
+
+    /** Cross-window blur can be toggled at runtime (battery saver, developer options): re-apply when it flips. */
+    private fun watchBlur() {
+        if (Build.VERSION.SDK_INT < 31 || blurListener != null) return
+        val l = java.util.function.Consumer<Boolean> { applyBlur() }
+        blurListener = l
+        (getSystemService(WINDOW_SERVICE) as WindowManager).addCrossWindowBlurEnabledListener(mainExecutor, l)
+    }
+
+    override fun onDestroy() {
+        if (Build.VERSION.SDK_INT >= 31) {
+            blurListener?.let { (getSystemService(WINDOW_SERVICE) as WindowManager).removeCrossWindowBlurEnabledListener(it) }
+        }
+        blurListener = null
+        super.onDestroy()
+    }
+
     /**
-     * iOS 26-style rounded top corners ("concentric" with the screen). Blur is only used when the
-     * device really supports it; otherwise the background stays fully opaque (no see-through).
+     * Three tiers: real backdrop blur (translucent shell), blur requested but unavailable (near-opaque tint so
+     * text stays readable), blur off (solid tonal shell). The window background is a rounded rect so the blur is
+     * masked to the shell's corners instead of showing a square blurred slab.
      */
     private fun applyBlur() {
         val blurRequested = Prefs.bool(this, "blur", false)
         val blur = blurRequested && blurSupported()
-        // Keep a translucent glass tint as a graceful fallback on ROMs without cross-window blur.
-        val fill = if (blurRequested) tokens.glassFill else tokens.background
+        val fill = when {
+            blur -> tokens.glassFillBlur
+            blurRequested -> tokens.glassFillNoBlur
+            else -> tokens.background
+        }
         root?.background = tokens.shell(fill)
         window.window?.let { w ->
-            // Android provides the real backdrop blur; the translucent shell supplies the glass tint.
-            w.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-            if (Build.VERSION.SDK_INT >= 31) w.setBackgroundBlurRadius(if (blur) 64.dp else 0)
+            if (blur) w.setBackgroundDrawable(GradientDrawable().apply {
+                setColor(0x01000000); cornerRadius = tokens.containerRadius
+            }) else w.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            if (Build.VERSION.SDK_INT >= 31) w.setBackgroundBlurRadius(if (blur) tokens.blurRadius else 0)
         }
     }
 
     // ---- layout ----
-    private fun render() {
+    private fun render(animateRows: Boolean = false) {
         val r = root ?: return
         r.removeAllViews()
         letterKeys.clear(); shiftKey = null
-        val keyH = Prefs.int(this, "key_h", 50).dp
+        val keyH = keyHeight()
 
         strip = if (Prefs.bool(this, "suggest", true) && suggestionsAllowed()) buildStrip().also { r.addView(it) } else null
 
@@ -164,7 +189,7 @@ class PillboardService : InputMethodService() {
             })
         }
         r.addView(rowOf {
-            key(if (symbols) "ABC" else "?123", keyH, 1.35f, KeyStyle.SPECIAL) { symbols = !symbols; render() }
+            key(if (symbols) "ABC" else "?123", keyH, 1.35f, KeyStyle.SPECIAL) { symbols = !symbols; render(animateRows = true) }
             key(",", keyH, 0.85f, KeyStyle.SPECIAL) { type(",") }
             key("space", keyH, 4.45f) { space() }
             key(".", keyH, 0.85f, KeyStyle.SPECIAL) { type(".") }
@@ -181,6 +206,31 @@ class PillboardService : InputMethodService() {
             key(name, keyH, 1.5f, if (hasAction) KeyStyle.ACCENT else KeyStyle.SPECIAL, icon = ico) { enter() }
         })
         updateStrip()
+        if (animateRows && animationsOn(this)) {
+            var n = 0
+            for (idx in 0 until r.childCount) {
+                val v = r.getChildAt(idx)
+                if (v === strip) continue
+                v.alpha = 0f; v.translationY = 6.dp.toFloat()
+                v.animate().alpha(1f).translationY(0f).setStartDelay(n * 18L).setDuration(tokens.rowInMs)
+                    .setInterpolator(DecelerateInterpolator()).start()
+                n++
+            }
+        }
+    }
+
+    /**
+     * User key height, clamped so 4–5 rows + suggestions never take more than ~55% of the screen
+     * (landscape, split-screen, short displays).
+     */
+    private fun keyHeight(): Int {
+        val pref = Prefs.int(this, "key_h", 50).dp
+        val rows = 4f + (if (Prefs.bool(this, "numrow", false) && !symbols) 0.8f else 0f)
+        val stripH = if (Prefs.bool(this, "suggest", true) && suggestionsAllowed()) 45.dp else 0
+        val budget = resources.displayMetrics.heightPixels * 0.55f - stripH - 16.dp - navInset
+        val margins = (2 * Prefs.int(this, "key_gap", 3) + 2).dp
+        val fit = (budget / rows).toInt() - margins
+        return minOf(pref, fit).coerceAtLeast(34.dp)
     }
 
     private fun rowOf(build: LinearLayout.() -> Unit) = LinearLayout(themed).apply {

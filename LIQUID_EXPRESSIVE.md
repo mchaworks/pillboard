@@ -54,3 +54,28 @@ The target is a balanced fusion: Liquid Glass controls the outer surface, depth,
 - **Popups:** `KeyPreview` (one reusable window, shown after the key is committed) and the long-press alternates share the same near-opaque floating surface, padded so elevation shadows are not clipped.
 - **Rows:** `isBaselineAligned = false` — mixed text sizes and icons must never shift keys vertically.
 - No globe key: system navigation already provides language switching.
+
+## Implementation notes (Phase 3 — motion & effects)
+
+- **Press:** input is committed first, then feedback. Tonal change and corner morph (+3dp) are instant; scale-down to 0.94 in 65ms.
+- **Release:** real damped-spring interpolator (`SpringInterpolator`, ζ = 0.62, ω = 22 rad/s, ~340ms) — no `androidx.dynamicanimation` dependency. Corner radius eases back in 140ms.
+- **Organic morph:** Shift state changes (off → on → lock) cross-fade tone and corner radius with the same spring instead of snapping.
+- **Page change (?123 ↔ ABC):** rows fade/rise in with an 18ms stagger instead of an abrupt rebuild.
+- **Preview bubble:** scale/fade in from its bottom edge, 70ms fade-out; a new press cancels the fade, so rolling typing never flickers.
+- **Glass:** shell is more translucent only when real backdrop blur is active; blur requested but unsupported falls back to a near-opaque tint (0xF2); blur off is a solid tonal shell. The window background is a rounded rect so the blur is masked to the shell corners. Blur state changes at runtime (battery saver) re-apply the shell.
+
+## Validation (Phase 4)
+
+Contrast, computed from the Material 3 baseline fallbacks (dynamic color will vary):
+
+| Pair | Dark | Light |
+|---|---|---|
+| Text on keycap | 9.5:1 | 17.1:1 |
+| Text on special key | 7.2:1 | ~10:1 |
+| On-accent on accent | 7.7:1 | 6.4:1 |
+| Keycap vs shell | 1.39:1 | 1.24:1 (was 1.10:1 before the shell/special-key tone fix) |
+
+- Light theme: shell is 5% darker and special keys 12% darker than the raw M3 roles so keycaps and special keys no longer melt into the shell.
+- Key width at 320/360/411dp with 3dp gap: ~25 / 29 / 34dp (height 44–58dp).
+- Key height is clamped so rows + suggestions never exceed ~55% of the screen height (landscape, split-screen).
+- Not yet verified on a device: backdrop-blur masking, popup positions on the top row, and real input latency. Check these on hardware.

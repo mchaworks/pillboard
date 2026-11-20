@@ -42,14 +42,27 @@ class KbTokens(private val ctx: Context) {
 
     // ---- motion (kept lightweight; input never waits on these) ----
     val pressMs = 65L
-    val releaseMs = 230L
     val pressScale = 0.94f
-    val releaseOvershoot = 1.7f
+    val springDamping = 0.62f          // < 1: a small, controlled overshoot, never a wobble
+    val springOmega = 22f
+    val spring = SpringInterpolator(springDamping, springOmega)
+    val releaseMs = spring.settleMs    // ~340ms
+    val morphMs = 180L                 // shape/tone change (Shift states)
+    val radiusReleaseMs = 140L         // corner morph back after a press
     val popupInMs = 100L
+    val fadeOutMs = 70L
+    val rowInMs = 140L                 // ?123 <-> ABC page change
+    val blurRadius = 40.dp
 
     // ---- color: glass belongs to the shell, keycaps stay solid tonal surfaces ----
+    // Light theme: shell sits a notch darker so white keycaps separate from it (validated contrast ~1.24:1).
     val background = c(MR.attr.colorSurfaceContainerLow, if (night) 0xFF1C1B1F.toInt() else 0xFFF3EDF7.toInt())
+        .let { if (night) it else tone(it, Color.BLACK, 0.05f) }
     val glassFill = ColorUtils.setAlphaComponent(background, if (night) 0xD8 else 0xE8)
+    /** Real backdrop blur keeps text legible, so the shell can be more translucent. */
+    val glassFillBlur = ColorUtils.setAlphaComponent(background, if (night) 0xB4 else 0xC8)
+    /** Blur requested but unavailable: no blur behind, so stay nearly opaque for readability. */
+    val glassFillNoBlur = ColorUtils.setAlphaComponent(background, 0xF2)
     val glassStroke = ColorUtils.setAlphaComponent(c(MR.attr.colorOutlineVariant, if (night) Color.WHITE else Color.BLACK), if (night) 0x48 else 0x30)
     val glassHighlight = ColorUtils.setAlphaComponent(Color.WHITE, if (night) 0x24 else 0x66)
     val key = if (night) c(MR.attr.colorSurfaceContainerHighest, 0xFF36343B.toInt())
@@ -57,7 +70,8 @@ class KbTokens(private val ctx: Context) {
     val keyText = c(MR.attr.colorOnSurface, if (night) Color.WHITE else Color.BLACK)
     private val seed: Int? = if (Prefs.dynamic(ctx)) null else Prefs.seedColor(ctx)
 
-    val special = seed?.let { ColorUtils.blendARGB(key, it, 0.16f) } ?: c(MR.attr.colorSecondaryContainer, 0xFF4A4458.toInt())
+    val special = seed?.let { ColorUtils.blendARGB(key, it, 0.16f) }
+        ?: c(MR.attr.colorSecondaryContainer, 0xFF4A4458.toInt()).let { if (night) it else tone(it, Color.BLACK, 0.12f) }
     val specialText = seed?.let { keyText } ?: c(MR.attr.colorOnSecondaryContainer, Color.WHITE)
     val pressed = seed?.let { ColorUtils.blendARGB(key, it, 0.34f) } ?: c(MR.attr.colorPrimaryContainer, Color.LTGRAY)
     val pressedText = seed?.let { keyText } ?: c(MR.attr.colorOnPrimaryContainer, Color.BLACK)
