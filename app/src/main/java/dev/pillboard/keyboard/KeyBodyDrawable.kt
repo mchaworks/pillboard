@@ -15,8 +15,8 @@ import android.graphics.drawable.Drawable
 /**
  * The keycap body. Same surface as the GradientDrawable it replaces (colours, four corner radii) so existing press /
  * Shift / release code is unchanged, plus an organic mode: [setMorph] changes the face size around its centre (a key
- * whose width or height really differs on the new page) and adds [bulge] (0..1), a soft Bezier deformation: the top
- * edge swells up and leans a little, the sides pinch, the bottom sags, like a flexible material. At rest it is a plain
+ * whose width or height really differs on the new page) and adds [bulge] (0..1), a soft Bezier deformation: all four
+ * edges bow outward a little, like a soft pillow / flexible material. At rest it is a plain
  * rounded rect. One Path and one Paint, reused every frame; no bitmaps.
  */
 internal class KeyBodyDrawable : Drawable() {
@@ -86,7 +86,7 @@ internal class KeyBodyDrawable : Drawable() {
         path.cubicTo(x1 + k * rTR, t, rt, t + rTR - k * rTR, rt, t + rTR)
 
         val y0 = t + rTR; val y1 = b - rBR; val dy = y1 - y0
-        path.cubicTo(rt - side, y0 + dy / 3f, rt - side, y0 + 2f * dy / 3f, rt, y1)
+        path.cubicTo(rt + side, y0 + dy / 3f, rt + side, y0 + 2f * dy / 3f, rt, y1)
         path.cubicTo(rt, y1 + k * rBR, rt - rBR + k * rBR, b, rt - rBR, b)
 
         val x2 = rt - rBR; val x3 = l + rBL; val dx2 = x2 - x3
@@ -94,7 +94,7 @@ internal class KeyBodyDrawable : Drawable() {
         path.cubicTo(x3 - k * rBL, b, l, b - rBL + k * rBL, l, b - rBL)
 
         val y2 = b - rBL; val y3 = t + rTL; val dy2 = y2 - y3
-        path.cubicTo(l + side, y2 - dy2 / 3f, l + side, y2 - 2f * dy2 / 3f, l, y3)
+        path.cubicTo(l - side, y2 - dy2 / 3f, l - side, y2 - 2f * dy2 / 3f, l, y3)
         path.cubicTo(l, y3 - k * rTL, x0 - k * rTL, t, x0, t)
         path.close()
     }
