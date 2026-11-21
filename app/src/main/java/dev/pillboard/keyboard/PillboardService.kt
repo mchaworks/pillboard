@@ -76,6 +76,8 @@ class PillboardService : InputMethodService() {
     private var builtDynamic = true
     private var builtSeed = 0
     private var builtFx = true
+    private var builtRim = true
+    private var pageKey: KeyView? = null
     /** One glass drawable per built input view: its AGSL layer and light animation are reused across applyBlur() calls. */
     private var shell: GlassSurfaceDrawable? = null
     /** Stage 4: edge refraction of the shell layer (API 33+, "Liquid refraction" setting). */
@@ -87,6 +89,7 @@ class PillboardService : InputMethodService() {
         builtDynamic = Prefs.dynamic(this)
         builtSeed = Prefs.seedColor(this)
         builtFx = Prefs.bool(this, "glass_fx", true)
+        builtRim = Prefs.bool(this, "glass_rim", true)
         shell = null
         themed = ContextThemeWrapper(this, if (builtDynamic) R.style.Theme_Pillboard else R.style.Theme_Pillboard_Static)
         tokens = KbTokens(themed)
@@ -112,7 +115,7 @@ class PillboardService : InputMethodService() {
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
-        if (Prefs.dynamic(this) != builtDynamic || Prefs.seedColor(this) != builtSeed || Prefs.bool(this, "glass_fx", true) != builtFx) setInputView(onCreateInputView())
+        if (Prefs.dynamic(this) != builtDynamic || Prefs.seedColor(this) != builtSeed || Prefs.bool(this, "glass_fx", true) != builtFx || Prefs.bool(this, "glass_rim", true) != builtRim) setInputView(onCreateInputView())
         symbols = false
         autoCap()
         applyBlur()
@@ -184,7 +187,7 @@ class PillboardService : InputMethodService() {
     private fun render(animateRows: Boolean = false) {
         val r = root ?: return
         r.removeAllViews()
-        letterKeys.clear(); shiftKey = null
+        letterKeys.clear(); shiftKey = null; pageKey = null
         val keyH = keyHeight()
 
         strip = if (Prefs.bool(this, "suggest", true) && suggestionsAllowed()) buildStrip().also { r.addView(it) } else null
@@ -208,7 +211,7 @@ class PillboardService : InputMethodService() {
             })
         }
         r.addView(rowOf {
-            key(if (symbols) "ABC" else "123", keyH, 1.35f, KeyStyle.SPECIAL) { symbols = !symbols; render(animateRows = true) }
+            pageKey = key(if (symbols) "ABC" else "123", keyH, 1.35f, KeyStyle.SPECIAL) { symbols = !symbols; render(animateRows = true) }
             key(",", keyH, 0.85f, KeyStyle.SPECIAL) { type(",") }
             key("space", keyH, 4.45f, KeyStyle.SPECIAL) { space() }.also { sp ->
                 if (Prefs.bool(this@PillboardService, "spaceslide", true)) {
@@ -234,11 +237,17 @@ class PillboardService : InputMethodService() {
             var n = 0
             for (idx in 0 until r.childCount) {
                 val v = r.getChildAt(idx)
-                if (v === strip) continue
+                if (v === strip || idx == r.childCount - 1) continue   // bottom row stays put; only the 123/ABC key morphs
                 v.alpha = 0f; v.translationY = 6.dp.toFloat()
                 v.animate().alpha(1f).translationY(0f).setStartDelay(n * 18L).setDuration(tokens.rowInMs)
                     .setInterpolator(DecelerateInterpolator()).start()
                 n++
+            }
+            // organic 123 <-> ABC: the key itself springs in from a slightly smaller, fainter state
+            pageKey?.let { k ->
+                k.alpha = 0.35f; k.scaleX = 0.84f; k.scaleY = 0.84f
+                k.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(tokens.releaseMs)
+                    .setInterpolator(tokens.spring).start()
             }
         }
     }

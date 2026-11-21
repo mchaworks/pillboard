@@ -173,3 +173,7 @@ What transferred to Pillboard: SDF rim, Fresnel-style two-lobe lighting, edge-ga
 - **Bug fixed:** Shift colour morph fed spring values >1 to `ArgbEvaluator` (channel overflow); now clamped. Pressed icon on the inverted Shift was invisible; fixed.
 - **iOS special keys:** SF-style shift / shift.fill / caps-lock / delete icons; labels `123`, `ABC`, `return` (editor actions: Go/Search/Send/Done/Next as words); Shift ON and LOCK both inverted (LOCK = underlined arrow); special keys flip to the letter-key tone while pressed.
 - **Unverified (never compiled/run):** check AGSL compile, refraction look at the shell edge, tunables in `GlassRefraction.kt` (`BEVEL_DP`, `REFRACT_DP`, `DISPERSION`) and `GlassSurface.kt` (`gloss`, `touchGlow`).
+
+## Glass rim (zip 12)
+
+`GlassShader` (API 33+) draws a 7dp perimeter band from the shell SDF: Fresnel falloff, cyan→blue→violet→magenta→warm dispersion ramp (hue follows bevel depth and edge direction), corner-weighted intensity, thin specular ridge (key light upper-left + weaker fill), faint inner reflection. Night = additive glow, light = normal blend + faint shade for thickness. Static, no animation. Pre-33: faint sweep-gradient ring (approximation). Setting: "Glass rim" (`glass_rim`, default on). Keycaps and prediction strip untouched. The QWEA0 module was not imported (it ships native code); only the lighting/dispersion ideas were adapted.

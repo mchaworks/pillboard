@@ -18,7 +18,10 @@ import androidx.annotation.RequiresApi
 import androidx.core.graphics.ColorUtils
 
 /**
- * AGSL (API 33+) lighting layer for the glass shell. It does NOT sample the backdrop (an IME window cannot read
+ * AGSL (API 33+) layer for the glass shell: press glow + the glass rim (7dp SDF band along the perimeter: Fresnel-style
+ * edge falloff, hue ramp cyan/blue/violet/magenta/warm that follows depth and edge direction, stronger at rounded
+ * corners, thin specular ridge from an upper-left key light, faint inner reflection). Static: no per-frame work.
+ * Older notes follow. It does NOT sample the backdrop (an IME window cannot read
  * the app behind it); it is simulated optics computed from the shell's own rounded-rect signed distance field:
  *  - a thin directional specular rim (key light + weaker opposite fill lobe),
  *  - a faint per-channel offset of that rim (simulated dispersion, not real refraction),
@@ -33,19 +36,88 @@ internal object GlassShader {
         uniform float2 touch;
         uniform float touchAmt;
         uniform float touchGlow;
+        uniform float rimAmt;
+        uniform float night;
 
         float sdRoundRect(float2 p, float2 halfSize, float r) {
             float2 q = abs(p) - halfSize + float2(r, r);
             return min(max(q.x, q.y), 0.0) + length(max(q, float2(0.0, 0.0))) - r;
         }
 
+        // refracted-light ramp: cyan, blue, violet, magenta, warm
+        float3 spectrum(float t) {
+            float3 cyan = float3(0.10, 0.88, 1.00);
+            float3 blue = float3(0.25, 0.45, 1.00);
+            float3 violet = float3(0.58, 0.32, 1.00);
+            float3 magenta = float3(1.00, 0.30, 0.78);
+            float3 warm = float3(1.00, 0.72, 0.45);
+            float x = clamp(t, 0.0, 1.0) * 4.0;
+            if (x < 1.0) return mix(cyan, blue, x);
+            if (x < 2.0) return mix(blue, violet, x - 1.0);
+            if (x < 3.0) return mix(violet, magenta, x - 2.0);
+            return mix(magenta, warm, x - 3.0);
+        }
+
         half4 main(float2 fragCoord) {
             float2 c = resolution * 0.5;
-            float d = sdRoundRect(fragCoord - c, c, radius);
+            float2 p = fragCoord - c;
+            float d = sdRoundRect(p, c, radius);
             float cov = clamp(0.5 - d / 1.5, 0.0, 1.0);
+
+            // press glow
             float2 dt = (fragCoord - touch) / (86.0 * dpx);
             float lit = exp(-dot(dt, dt)) * touchAmt * touchGlow * cov;
-            return half4(half(lit), half(lit), half(lit), half(lit));
+            float3 rgb = float3(lit, lit, lit);
+            float pa = lit;
+
+            // glass rim: thin band along the perimeter, built from the SDF (static, no animation)
+            float band = 7.0 * dpx;
+            float depth = -d;
+            if (rimAmt > 0.0 && depth > 0.0 && depth < band * 1.2) {
+                float u = min(depth / band, 1.0);
+                float2 g = float2(
+                    sdRoundRect(p + float2(1.0, 0.0), c, radius) - sdRoundRect(p - float2(1.0, 0.0), c, radius),
+                    sdRoundRect(p + float2(0.0, 1.0), c, radius) - sdRoundRect(p - float2(0.0, 1.0), c, radius));
+                float2 n = g / max(length(g), 0.0001);          // outward normal
+
+                // 0 on straight edges, 1 through the rounded corners
+                float2 q = abs(p) - c + float2(radius, radius);
+                float corner = smoothstep(-0.1 * radius, 0.5 * radius, min(q.x, q.y));
+
+                // key light upper-left, weaker fill from the opposite side
+                float2 L = float2(-0.552, -0.834);
+                float lobe1 = pow(max(dot(n, L), 0.0), 2.0);
+                float lobe2 = pow(max(dot(n, -L), 0.0), 3.0) * 0.45;
+                float lobe = clamp(lobe1 + lobe2, 0.0, 1.0);
+
+                // Fresnel-style: strongest at the grazing outer edge, falling off inward
+                float fres = pow(1.0 - u, 3.0);
+
+                // dispersion: hue follows depth into the bevel and drifts with the edge direction
+                float phase = 0.5 + 0.5 * dot(n, float2(0.8, -0.6));
+                float3 hue = spectrum(u * 0.7 + 0.3 * phase);
+                float chroma = fres * (0.30 + 0.70 * corner) * (0.35 + 0.65 * lobe) * rimAmt
+                    * mix(0.26, 0.46, night);
+
+                // thin specular ridge just inside the edge (slightly warm), plus a faint inner reflection
+                float rd = (depth - 1.6 * dpx) / (0.9 * dpx);
+                float ridge = exp(-rd * rd);
+                float spec = ridge * (lobe1 + 0.6 * lobe2) * (0.55 + 0.45 * corner) * rimAmt
+                    * mix(0.50, 0.55, night);
+                float id = (depth - band) / (0.8 * dpx);
+                float inner = exp(-id * id) * lobe2 * 0.22 * rimAmt;
+
+                // light theme: a faint dark shade under the rim gives the glass thickness
+                float shade = (1.0 - night) * fres * 0.10 * rimAmt;
+
+                float aScale = mix(1.0, 0.3, night);            // night: additive glow, day: normal blend
+                float3 warmWhite = mix(float3(1.0, 1.0, 1.0), float3(1.0, 0.86, 0.68), 0.35);
+                rgb += hue * chroma * cov + warmWhite * spec * cov + float3(inner, inner, inner) * cov;
+                pa += (chroma + spec + inner) * aScale * cov + shade * cov;
+            }
+            rgb = clamp(rgb, float3(0.0), float3(1.0));
+            pa = clamp(pa, 0.0, 1.0);
+            return half4(half(rgb.r), half(rgb.g), half(rgb.b), half(pa));
         }
     """
 
@@ -68,13 +140,15 @@ internal class GlassShaderLayer {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).also { it.shader = shader }
 
     fun draw(canvas: Canvas, rect: RectF, radius: Float, density: Float, night: Boolean,
-             touchX: Float, touchY: Float, touchAmt: Float) {
+             touchX: Float, touchY: Float, touchAmt: Float, glow: Boolean, rim: Boolean) {
         shader.setFloatUniform("resolution", rect.width(), rect.height())
         shader.setFloatUniform("radius", radius)
         shader.setFloatUniform("dpx", density)
         shader.setFloatUniform("touch", touchX, touchY)
         shader.setFloatUniform("touchAmt", touchAmt)
-        shader.setFloatUniform("touchGlow", if (night) 0.14f else 0.30f)
+        shader.setFloatUniform("touchGlow", if (!glow) 0f else if (night) 0.14f else 0.30f)
+        shader.setFloatUniform("rimAmt", if (rim) 1f else 0f)
+        shader.setFloatUniform("night", if (night) 1f else 0f)
         canvas.drawRoundRect(rect, radius, radius, paint)
     }
 }
@@ -92,6 +166,7 @@ class GlassSurfaceDrawable(
     private var fill: Int,
     private val style: Style = Style.SHELL,
     private val useShader: Boolean = true,
+    private val rim: Boolean = false,
 ) : Drawable() {
 
     enum class Style { SHELL, FLOATING }
@@ -103,6 +178,7 @@ class GlassSurfaceDrawable(
     private val rimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1.2f * density() }
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val sheenPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val chromaPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2f * density() }
     private var shader: GlassShaderLayer? = null
     private var shaderTried = false
     private var w = 0
@@ -134,7 +210,7 @@ class GlassSurfaceDrawable(
      * back to rest. No-op unless the AGSL layer is active, so the fallback path never animates or invalidates.
      */
     fun leanLight(px: Float?, py: Float?, animate: Boolean) {
-        if (shader == null) return
+        if (shader == null || !useShader) return
         val down = px != null && py != null && w > 0
         val frac = if (down) (px!! / w).coerceIn(0f, 1f) else 0.5f
         val targetX = DEFAULT_LIGHT_X + (frac - 0.5f) * 2f * LIGHT_SWAY
@@ -192,13 +268,20 @@ class GlassSurfaceDrawable(
             intArrayOf(clear, clear, sheen, clear, clear), floatArrayOf(0f, 0.30f, 0.5f, 0.70f, 1f), Shader.TileMode.CLAMP)
         rimPaint.shader = LinearGradient(0f, 0f, w.toFloat(), h.toFloat(),
             intArrayOf(hi, mid, mid, lo), floatArrayOf(0f, 0.32f, 0.72f, 1f), Shader.TileMode.CLAMP)
+        if (style == Style.SHELL && rim) {
+            // pre-API-33 rim: faint cyan/blue/violet/magenta/warm sweep (approximation, not refraction)
+            val a = if (t.night) 0x3C else 0x26
+            val cols = intArrayOf(0xFF22DDFF.toInt(), 0xFF4073FF.toInt(), 0xFF9552FF.toInt(), 0xFFFF4DC7.toInt(), 0xFFFFB873.toInt(), 0xFF22DDFF.toInt())
+                .map { ColorUtils.setAlphaComponent(it, a) }.toIntArray()
+            chromaPaint.shader = android.graphics.SweepGradient(w / 2f, h / 2f, cols, floatArrayOf(0f, 0.2f, 0.45f, 0.7f, 0.88f, 1f))
+        }
     }
 
     private fun lift(c: Int, r: Float) =
         ColorUtils.setAlphaComponent(ColorUtils.blendARGB(c or 0xFF000000.toInt(), Color.WHITE, r), Color.alpha(c))
 
     private fun ensureShader(canvas: Canvas) {
-        if (!useShader || style != Style.SHELL || shaderTried || Build.VERSION.SDK_INT < 33) return
+        if (!(useShader || rim) || style != Style.SHELL || shaderTried || Build.VERSION.SDK_INT < 33) return
         if (!canvas.isHardwareAccelerated) return          // RuntimeShader needs the hardware renderer
         shaderTried = true
         shader = GlassShader.create()
@@ -215,7 +298,12 @@ class GlassSurfaceDrawable(
 
         val s = shader
         if (s != null && Build.VERSION.SDK_INT >= 33 && canvas.isHardwareAccelerated) {
-            s.draw(canvas, rect, radius, density(), t.night, touchX, touchY, touchAmt)
+            s.draw(canvas, rect, radius, density(), t.night, touchX, touchY, touchAmt, useShader, rim)
+        } else if (style == Style.SHELL && rim) {
+            val ci = 1.5f * density()
+            val ri = RectF(ci, ci, w - ci, h - ci)
+            canvas.drawRoundRect(ri, radius - ci, radius - ci, chromaPaint)
+            canvas.drawRoundRect(inner, radius - 1f, radius - 1f, rimPaint)
         } else if (style != Style.SHELL) {
             // soft light falling on the upper part of the shell, clipped to the rounded top
             val glowH = minOf(h * 0.55f, 96.dp.toFloat())
