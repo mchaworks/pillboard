@@ -335,6 +335,12 @@ class KeyView(
     fun setKeyStyle(style: KeyStyle) = applyStyle(style, animate = true)
     fun setLabel(l: String) { text = l; contentDescription = l }
 
+    /** Dynamic label (Shift case, layout page): Blur Replace if it really changes; touch handling is untouched. */
+    internal fun setLabelBlur(l: String, from: CharSequence? = null, minGapMs: Long = 0L, inherited: List<BlurTextLayer>? = null) {
+        contentDescription = l
+        setTextBlur(l, from, minGapMs, inherited)
+    }
+
     /** Show a vector icon instead of text; [desc] is the accessibility label. */
     fun setIcon(res: Int, desc: String? = null) {
         icon = if (res == 0) null else ContextCompat.getDrawable(context, res)?.mutate()

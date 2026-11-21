@@ -126,11 +126,11 @@ open class BlurTextView(context: Context) : TextView(context) {
      */
     internal fun setTextBlur(next: CharSequence, from: CharSequence? = null, minGapMs: Long = 0L, inherited: List<BlurTextLayer>? = null) {
         val prev = text
+        if (from == null && inherited == null && prev.contentEquals(next)) return     // unchanged: nothing to animate
         val now = SystemClock.uptimeMillis()
         val rapid = minGapMs > 0L && now - lastChangeAt < minGapMs
         lastChangeAt = now
         if (!animationsOn(context) || rapid) { blur?.cancel(); setText(next); return }
-        if (from == null && inherited == null && prev.contentEquals(next)) return
         val t = blur ?: BlurTextTransition(this).also { blur = it }
         inChange = true
         setText(next)

@@ -15,6 +15,8 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.animation.DecelerateInterpolator
+import androidx.core.view.children
+import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.WindowManager
@@ -184,6 +186,12 @@ class PillboardService : InputMethodService() {
     // ---- layout ----
     private fun render(animateRows: Boolean = false) {
         val r = root ?: return
+        // labels of the rows above the bottom row (text + any running Blur Replace), kept to animate only what changes
+        val oldRows = if (animateRows) (0 until r.childCount).map { r.getChildAt(it) }
+            .filter { it !== strip && it !== r.getChildAt(r.childCount - 1) }
+            .map { row -> (row as ViewGroup).children.filterIsInstance<KeyView>().filter { it.text.length == 1 }
+                .map { it.text.toString() to it.blurSnapshot() }.toList() }
+        else null
         r.removeAllViews()
         letterKeys.clear(); shiftKey = null; pageKey = null
         val keyH = keyHeight()
@@ -238,15 +246,19 @@ class PillboardService : InputMethodService() {
             key(name, keyH, 1.5f, KeyStyle.ACCENT) { enter() }   // always the primary action
         })
         updateStrip()
-        if (animateRows && animationsOn(this)) {
-            var n = 0
-            for (idx in 0 until r.childCount) {
-                val v = r.getChildAt(idx)
-                if (v === strip || idx == r.childCount - 1) continue   // bottom row stays put; the 123/ABC label uses Blur Replace
-                v.alpha = 0f; v.translationY = 6.dp.toFloat()
-                v.animate().alpha(1f).translationY(0f).setStartDelay(n * 18L).setDuration(tokens.rowInMs)
-                    .setInterpolator(DecelerateInterpolator()).start()
-                n++
+        if (oldRows != null && animationsOn(this)) {
+            // rows stay still; each key whose label differs from the old page blurs from the old to the new character.
+            // Rows are matched from the bottom (a number row above QWERTY has no counterpart), keys by position.
+            val rows = (0 until r.childCount).map { r.getChildAt(it) }.filter { it !== strip && it !== r.getChildAt(r.childCount - 1) }
+            for (ri in rows.indices) {
+                val old = oldRows.getOrNull(oldRows.size - rows.size + ri)
+                var ki = 0
+                for (k in (rows[ri] as ViewGroup).children.filterIsInstance<KeyView>()) {
+                    if (k.text.length != 1) continue
+                    val o = old?.getOrNull(ki++)
+                    if (o != null && o.second == null && o.first == k.text.toString()) continue    // unchanged: stays still
+                    k.setLabelBlur(k.text.toString(), from = o?.first ?: "", inherited = o?.second)
+                }
             }
         }
     }
@@ -323,7 +335,8 @@ class PillboardService : InputMethodService() {
         if (symbols) return
         letterKeys.forEach {
             val l = it.text.toString()
-            it.setLabel(if (shift != Shift.OFF) l.uppercase() else l.lowercase())
+            // only keys whose label really changes animate (ON <-> LOCK keeps the same capitals); fast typing snaps
+            it.setLabelBlur(if (shift != Shift.OFF) l.uppercase() else l.lowercase(), minGapMs = BlurTextTokens.RAPID_GAP_MS)
         }
         shiftKey?.let {
             it.setIcon(shiftIcon(), shiftDesc())

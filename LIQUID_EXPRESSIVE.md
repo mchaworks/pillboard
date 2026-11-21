@@ -193,3 +193,7 @@ Files (flat, main package): `BlurTextTokens` (blur dp, durations, scale, drift, 
 - Applied to: the 123/ABC key (both directions; a transition still running on the old key is carried over to the rebuilt key via `blurSnapshot()`), and the three suggestion slots. Suggestion changes closer than `RAPID_GAP_MS` (fast typing) snap instead of animating. Other labels can adopt it by extending `BlurTextView` and calling `setTextBlur`; static text and per-keystroke letter keys are deliberately not routed through it.
 - Animations off in system settings = plain text swap.
 - Not verified on device or compiled (no SDK in the authoring sandbox). Tune first: `MAX_BLUR_DP`, `OUT_MS`/`IN_MS`, `IN_DELAY_MS`, `SCALE_MIN`.
+
+## Keycap Blur Replace (zip 19)
+
+`KeyView.setLabelBlur` = `setTextBlur` on keycaps. Shift: `updateShiftUi` relabels only keys whose case really changes (ON <-> LOCK changes nothing), changes closer than `RAPID_GAP_MS` snap. 123 <-> ABC: `render(animateRows = true)` captures the old rows' single-character labels (+ any running transition), rows stay still (the old row fade/slide was replaced), and each key whose label differs animates old -> new; keys with no old counterpart blur in, unchanged keys are skipped. Rows are matched from the bottom, keys by position. Ordinary keypresses, backspace repeat, icons and the bottom row are never routed through it. Language switching: no language feature exists yet; the same call (only changed labels) applies when one is added.
