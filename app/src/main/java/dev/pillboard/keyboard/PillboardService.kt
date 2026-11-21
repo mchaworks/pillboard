@@ -127,6 +127,7 @@ class PillboardService : InputMethodService() {
         builtSeed = Prefs.seedColor(this)
         builtFx = Prefs.bool(this, "glass_fx", true)
         shell = null
+        capBlurAnim?.cancel(); capBlurK = 0f          // a rebuilt host has no headroom: the blur starts whole
         themed = ContextThemeWrapper(this, if (builtDynamic) R.style.Theme_Pillboard else R.style.Theme_Pillboard_Static)
         tokens = KbTokens(themed)
         preview = KeyPreview(themed, tokens)
@@ -239,6 +240,7 @@ class PillboardService : InputMethodService() {
      * masked to the shell's corners instead of showing a square blurred slab.
      */
     private var blurOn = false
+    private var outlineHost: View? = null
     /** 0 = normal window blur, 1 = blur off + opaque fill: eased while the strip capsule's headroom exists. */
     private var capBlurK = 0f
     private var capBlurAnim: android.animation.ValueAnimator? = null
@@ -261,7 +263,7 @@ class PillboardService : InputMethodService() {
         capBlurAnim?.cancel()
         if (!blurOn || !animationsOn(this)) { capBlurK = to; applyCapsuleBlur(); return }
         capBlurAnim = android.animation.ValueAnimator.ofFloat(capBlurK, to).apply {
-            duration = 140L
+            duration = if (to > capBlurK) 100L else 160L      // out fast (the slab must not show), back a bit slower
             addUpdateListener { capBlurK = it.animatedValue as Float; applyCapsuleBlur() }
             start()
         }
@@ -291,6 +293,12 @@ class PillboardService : InputMethodService() {
                 w.setBackgroundDrawable(mask)
                 w.decorView.invalidateOutline()
                 hv.post { w.decorView.invalidateOutline() }   // host position is known only after layout
+                if (outlineHost !== hv) {                     // the outline has bounds: follow the host when its size changes
+                    outlineHost = hv
+                    hv.addOnLayoutChangeListener { _, l, t, r, b, oldL, oldT, oldR, oldB ->
+                        if (r - l != oldR - oldL || b - t != oldB - oldT) w.decorView.invalidateOutline()
+                    }
+                }
             } else {
                 glass.onShapeChanged = null
                 w.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
@@ -533,6 +541,8 @@ class PillboardService : InputMethodService() {
     private var clipTimeMs = 0L                  // when the current primary clip was copied (0 = nothing to offer)
     private var clipDismissed: String? = null    // pasted already: not offered again until copied anew
     private var clipLayoutOn = false
+    private var clipChip: LinearLayout? = null
+    private var clipText: TextView? = null
     private var lastStripKey: String? = null
     private val clipExpire = Runnable { updateStrip() }
     private val stripRefresh = Runnable { if (panel == Panel.NONE) refreshStripIfStale() }
@@ -564,22 +574,23 @@ class PillboardService : InputMethodService() {
         }
     }
 
-    /** While the chip shows, the centre slot takes the whole strip (the side slots collapse) and carries a clipboard icon. */
-    private fun setClipChipLayout(s: LinearLayout, on: Boolean) {
+    /** While the chip shows, the three suggestion slots collapse and the chip (icon + text, centred) takes the whole strip. */
+    private fun setClipChipLayout(s: LinearLayout, on: Boolean, text: String?) {
+        val chip = clipChip ?: return
+        if (on) clipText?.text = text
         if (clipLayoutOn == on) return
         clipLayoutOn = on
-        for (i in intArrayOf(0, 2)) (s.getChildAt(i * 2).layoutParams as LinearLayout.LayoutParams).weight = if (on) 0f else 1f
-        val tv = s.getChildAt(2) as TextView
+        for (i in 0 until 3) (s.getChildAt(i * 2).layoutParams as LinearLayout.LayoutParams).weight = if (on) 0f else 1f
+        chip.animate().cancel()
         if (on) {
-            val d = androidx.core.content.ContextCompat.getDrawable(themed, R.drawable.ic_clipboard)?.mutate()?.apply {
-                setBounds(0, 0, 18.dp, 18.dp); setTint(tokens.keyText); alpha = 190
-            }
-            tv.setCompoundDrawablesRelative(d, null, null, null)
-            tv.compoundDrawablePadding = 8.dp
-            tv.ellipsize = android.text.TextUtils.TruncateAt.END
+            chip.visibility = View.VISIBLE
+            if (animationsOn(this) && s.isLaidOut) {
+                chip.alpha = 0f; chip.scaleX = 0.94f; chip.scaleY = 0.94f
+                chip.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(BlurTextTokens.TOTAL_MS).setInterpolator(BlurTextTokens.inEase).start()
+            } else { chip.alpha = 1f; chip.scaleX = 1f; chip.scaleY = 1f }
         } else {
-            tv.setCompoundDrawablesRelative(null, null, null, null)
-            tv.ellipsize = null
+            chip.visibility = View.GONE
+            chip.alpha = 1f; chip.scaleX = 1f; chip.scaleY = 1f
         }
         s.requestLayout()
     }
@@ -1015,6 +1026,7 @@ class PillboardService : InputMethodService() {
         (root?.layoutParams as? FrameLayout.LayoutParams)?.topMargin = px
         shell?.topPad = px
         h.requestLayout()
+        window.window?.decorView?.let { d -> d.post { d.invalidateOutline() } }     // the window outline depends on the headroom
     }
 
     /** Grow the window upward first, build the capsule once that layout has happened. */
@@ -1387,6 +1399,34 @@ class PillboardService : InputMethodService() {
                 background = tokens.stripItemBackground()
             }, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
         }
+        run {   // clipboard chip: a pill with the icon and the copied text centred as ONE group; takes the slots' place while a fresh copy is on offer
+            val iv = android.widget.ImageView(themed).apply {
+                setImageResource(R.drawable.ic_clipboard)
+                imageTintList = android.content.res.ColorStateList.valueOf(tokens.keyText)
+                imageAlpha = 200
+            }
+            val tx = TextView(themed).apply {
+                textSize = 15f; maxLines = 1; includeFontPadding = false
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                setTextColor(tokens.keyText)
+                if (medium != null) typeface = medium
+            }
+            val chip = LinearLayout(themed).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
+                visibility = View.GONE
+                setPadding(14.dp, 0, 16.dp, 0)
+                fun pill(c: Int) = GradientDrawable().apply { setColor(c); cornerRadius = tokens.stripRadius - 4.dp }
+                background = android.graphics.drawable.StateListDrawable().apply {
+                    addState(intArrayOf(android.R.attr.state_pressed), pill(tokens.stripPressed))
+                    addState(intArrayOf(), pill(androidx.core.graphics.ColorUtils.setAlphaComponent(tokens.keyText, 0x14)))
+                }
+                contentDescription = "Paste copied text"
+                addView(iv, LinearLayout.LayoutParams(18.dp, 18.dp).apply { marginEnd = 9.dp })
+                addView(tx, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
+            }
+            clipChip = chip; clipText = tx
+            addView(chip, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f).apply { setMargins(2.dp, 1.dp, 2.dp, 1.dp) })
+        }
         run {
             addView(View(themed).apply { setBackgroundColor(tokens.divider) },
                 LinearLayout.LayoutParams(1.dp, 14.dp).apply { gravity = Gravity.CENTER_VERTICAL })
@@ -1442,17 +1482,18 @@ class PillboardService : InputMethodService() {
         val clip = if (c.word.isEmpty() && !isPasswordField()) freshClip(maxAge) else null
         val res = if (clip == null && !brand && Prefs.bool(this, "suggest", true)) Suggestions.suggest(c) else null
         val any = (0 until 3).any { res?.slot(it) != null }
-        setClipChipLayout(s, clip != null)
+        setClipChipLayout(s, clip != null, clip?.let { clipPreview(it) })
+        clipChip?.setOnClickListener(if (clip != null) View.OnClickListener { pasteClip(clip) } else null)
         for (i in 0 until 3) {
             val tv = s.getChildAt(i * 2) as BlurTextView
             val cand = res?.slot(i)          // slot 1 (centre) is the lead candidate
             val nextText = when {
-                clip != null -> if (i == 1) clipPreview(clip) else ""
+                clip != null -> ""
                 brand && i == 1 -> "Glimkey"
                 else -> cand?.label ?: ""
             }
-            if (i == 1) {       // the name is bold, the lead candidate and the copied text medium
-                val f = if (brand && clip == null) ResourcesCompat.getFont(themed, R.font.gsr_bold) else ResourcesCompat.getFont(themed, R.font.gsr_medium)
+            if (i == 1) {       // the name is bold, the lead candidate medium
+                val f = if (brand) ResourcesCompat.getFont(themed, R.font.gsr_bold) else ResourcesCompat.getFont(themed, R.font.gsr_medium)
                 if (f != null && tv.typeface !== f) tv.typeface = f
             }
             // tv.tag = the text this slot is heading to. Blur Replace sets the text at once and only animates the paint;
@@ -1462,7 +1503,6 @@ class PillboardService : InputMethodService() {
                 tv.setTextBlur(nextText, minGapMs = BlurTextTokens.RAPID_GAP_MS)
             }
             val action: View.OnClickListener? = when {
-                clip != null && i == 1 -> View.OnClickListener { pasteClip(clip) }
                 cand != null -> View.OnClickListener { applySuggestion(c, cand) }
                 else -> null
             }

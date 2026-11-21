@@ -250,6 +250,9 @@ class GlassSurfaceDrawable(
     /** Corner radius of the shell itself (px). */
     val shellRadius: Float get() = radius
 
+    /** True while the capsule actually sticks out of the shell (the outline is then not the shell's round rect any more). */
+    val capsuleMerged: Boolean get() = capOn && protrusion() > 0f
+
     /** True when the AGSL layer is actually in use (for status/diagnostics). */
     val shaderActive get() = shader != null || blob != null
 

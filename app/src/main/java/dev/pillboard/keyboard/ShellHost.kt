@@ -13,6 +13,7 @@ import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.os.Build
 import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewOutlineProvider
@@ -77,13 +78,22 @@ internal class ShellHost(ctx: Context) : FrameLayout(ctx) {
 }
 
 /**
- * Window background that only defines the shape of the window-blur region: the merged outline of shell and capsule
- * (without the neck fillets, so the blur never extends past the glass). Almost fully transparent (alpha 1/255).
+ * Window background that only defines the shape of the window-blur region (the merged outline of shell and capsule while
+ * the capsule is out, the shell's round rect otherwise). Almost fully transparent (alpha 1/255).
+ *
+ * It is a [GradientDrawable] on purpose: the framework reads the blur's corner radius from the decor view's background
+ * and outline, and a rounded [GradientDrawable] background (plus a round-rect outline, see [getOutline]) is the form
+ * both of those paths understand, so the blur follows the shell's corners whichever of them is used.
  */
-internal class ShapeMaskDrawable(private val glass: GlassSurfaceDrawable, private val host: View) : Drawable() {
+internal class ShapeMaskDrawable(private val glass: GlassSurfaceDrawable, private val host: View) : GradientDrawable() {
     private val path = Path()
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x01000000 }
     private val loc = IntArray(2)
+
+    init {
+        setColor(0x01000000)
+        cornerRadius = glass.shellRadius
+    }
 
     override fun draw(canvas: Canvas) {
         host.getLocationInWindow(loc)
@@ -95,25 +105,24 @@ internal class ShapeMaskDrawable(private val glass: GlassSurfaceDrawable, privat
     }
 
     /**
-     * The window blur takes its corner radius from the decor view's outline, which comes from this background's
-     * outline. The radius is only defined for a round-rect outline: a Path outline has an undefined radius, so the
-     * blur came out as a square slab behind the rounded glass. So this is always the SHELL's round rect (the capsule's
-     * headroom is handled by fading the blur out while the capsule is up, see PillboardService.fadeCapsuleBlur: one
-     * window blur region cannot follow a shell+capsule union).
+     * At rest the outline is the shell's round rect: a Path outline has no defined corner radius, which gave a square
+     * blur slab behind the rounded glass. While the capsule sticks out of the shell the outline MUST be the merged path
+     * instead: the decor clips to it, so a plain shell outline would cut the capsule off. (The blur itself is faded out
+     * meanwhile, see PillboardService.fadeCapsuleBlur.)
      */
     override fun getOutline(outline: Outline) {
         host.getLocationInWindow(loc)
         if (host.width <= 0 || host.height <= 0) { outline.setEmpty(); return }
-        outline.setRoundRect(
-            loc[0], loc[1] + glass.topPad, loc[0] + host.width, loc[1] + host.height, glass.shellRadius,
-        )
+        if (glass.capsuleMerged) {
+            glass.maskPath(path)
+            val p = Path(path)
+            p.offset(loc[0].toFloat(), loc[1].toFloat())
+            if (Build.VERSION.SDK_INT >= 30) outline.setPath(p) else outline.setEmpty()
+        } else {
+            outline.setRoundRect(loc[0], loc[1] + glass.topPad, loc[0] + host.width, loc[1] + host.height, glass.shellRadius)
+        }
         outline.alpha = 1f
     }
-
-    override fun setAlpha(alpha: Int) {}
-    override fun setColorFilter(cf: ColorFilter?) {}
-    @Deprecated("Deprecated in Java")
-    override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }
 
 /**
