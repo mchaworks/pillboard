@@ -290,7 +290,7 @@ class PillboardService : InputMethodService() {
             emojiMode && emojiSearch -> buildSearchBar().also { r.addView(it) }
             grid -> buildEmojiTabs().also { r.addView(it) }
             translateMode -> buildTranslateBar().also { r.addView(it) }
-            (Prefs.bool(this, "suggest", true) || Prefs.bool(this, "translate", false)) && suggestionsAllowed() -> buildStrip().also { r.addView(it) }
+            (Prefs.bool(this, "suggest", true) || Prefs.bool(this, "translate", false)) -> buildStrip().also { r.addView(it) }
             else -> null
         }
 
@@ -1140,7 +1140,7 @@ class PillboardService : InputMethodService() {
     private fun keyHeight(): Int {
         val pref = Prefs.int(this, "key_h", 50).dp
         val rows = 4f + (if (Prefs.bool(this, "numrow", false) && !symbols) 0.8f else 0f)
-        val stripH = if (Prefs.bool(this, "suggest", true) && suggestionsAllowed()) 45.dp else 0
+        val stripH = if (Prefs.bool(this, "suggest", true) || Prefs.bool(this, "translate", false)) 45.dp else 0
         val budget = resources.displayMetrics.heightPixels * 0.55f - stripH - 16.dp - navInset
         val margins = (2 * Prefs.int(this, "key_gap", 3) + 4).dp
         val fit = (budget / rows).toInt() - margins
@@ -1247,7 +1247,7 @@ class PillboardService : InputMethodService() {
                 background = tokens.stripItemBackground()
             }, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
         }
-        if (suggestionsAllowed()) {
+        run {
             addView(View(themed).apply { setBackgroundColor(tokens.divider) },
                 LinearLayout.LayoutParams(1.dp, 14.dp).apply { gravity = Gravity.CENTER_VERTICAL })
             val f = StripFeature.current(this@PillboardService)
@@ -1294,13 +1294,17 @@ class PillboardService : InputMethodService() {
         val s = strip ?: return
         val c = suggestionCtx()
         // empty field: the centre slot carries the name with no dividers, whatever the engine would offer (start-of-sentence words)
-        val brand = fieldIsEmpty()
+        val brand = fieldIsEmpty() || !suggestionsAllowed()      // terminals, passwords, numbers: just the name and the dot widget
         val res = if (!brand && Prefs.bool(this, "suggest", true)) Suggestions.suggest(c) else null
         val any = (0 until 3).any { res?.slot(it) != null }
         for (i in 0 until 3) {
             val tv = s.getChildAt(i * 2) as BlurTextView
             val cand = res?.slot(i)          // slot 1 (centre) is the lead candidate
             val nextText = if (brand && i == 1) "Glimkey" else cand?.label ?: ""
+            if (i == 1) {       // the name is bold, the lead candidate medium
+                val f = if (brand) ResourcesCompat.getFont(themed, R.font.gsr_bold) else ResourcesCompat.getFont(themed, R.font.gsr_medium)
+                if (f != null && tv.typeface !== f) tv.typeface = f
+            }
             // tv.tag = the text this slot is heading to. Blur Replace sets the text at once and only animates the paint;
             // changes faster than RAPID_GAP_MS (fast typing) snap, so typing never waits on the effect.
             if (tv.tag != nextText) {
@@ -1309,9 +1313,6 @@ class PillboardService : InputMethodService() {
             }
             tv.setOnClickListener(if (cand == null) null else View.OnClickListener { applySuggestion(c, cand) })
         }
-        val mid = s.getChildAt(2)
-        val a = if (brand) 0.55f else 1f
-        if (mid.alpha != a) mid.animate().alpha(a).setDuration(BlurTextTokens.TOTAL_MS).start()
         setDividers(s, any)
     }
 
