@@ -147,7 +147,7 @@ class KeyView(
     private val repeats: Boolean,
     iconRes: Int = 0,
     private val onKey: () -> Unit,
-) : TextView(context) {
+) : BlurTextView(context) {
 
     /** Returns long-press alternates for the key's current label (empty = none). */
     var altsFor: ((String) -> List<String>)? = null
@@ -173,8 +173,6 @@ class KeyView(
     private var pressedInk = 0
     private var icon: Drawable? = null
     private var restColors = IntArray(2)
-    internal val restRadiusPx: Float get() = rest
-    internal val restFillColor: Int get() = restColors[0]
     private val downColors = IntArray(2)
     private var morph: ValueAnimator? = null
     private val argb = ArgbEvaluator()

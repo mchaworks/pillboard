@@ -105,12 +105,12 @@ class KbTokens(private val ctx: Context) {
 
     // ---- shared surfaces ----
     /**
-     * Floating glass shell, drawn on Canvas by [GlassSurfaceDrawable]: tonal gradient fill, directional specular rim
+     * Floating glass shell, drawn on Canvas by [GlassSurfaceDrawable]: tonal gradient fill, hairline
      * and soft upper light (AGSL on API 33+ when "Liquid light" is on, gradients otherwise), plus a hairline outline.
      * Also supplies the rounded outline used for clipping and for the window-blur mask.
      */
     fun shell(fill: Int = glassFill): GlassSurfaceDrawable =
-        GlassSurfaceDrawable(this, containerRadius, fill, GlassSurfaceDrawable.Style.SHELL, Prefs.bool(ctx, "glass_fx", true), Prefs.bool(ctx, "glass_rim", true))   // real blur or flat tint; optional press glow only
+        GlassSurfaceDrawable(this, containerRadius, fill, GlassSurfaceDrawable.Style.SHELL, Prefs.bool(ctx, "glass_fx", true))   // real blur or flat tint; optional press glow only
 
     fun stripBackground(): Drawable = GradientDrawable().apply {
         setColor(stripFill); cornerRadius = stripRadius; setStroke(1.dp, stripStroke)
@@ -123,7 +123,7 @@ class KbTokens(private val ctx: Context) {
         addState(intArrayOf(), ColorDrawable(Color.TRANSPARENT))
     }
 
-    /** Floating popups share the glass renderer (rim + hairline) but stay near-opaque over arbitrary app content. */
+    /** Floating popups share the glass renderer (hairline) but stay near-opaque over arbitrary app content. */
     fun popupBackground(): Drawable =
         GlassSurfaceDrawable(this, popupRadius, popupFill, GlassSurfaceDrawable.Style.FLOATING, useShader = false)
 }

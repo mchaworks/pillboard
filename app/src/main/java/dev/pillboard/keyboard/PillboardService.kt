@@ -76,9 +76,7 @@ class PillboardService : InputMethodService() {
     private var builtDynamic = true
     private var builtSeed = 0
     private var builtFx = true
-    private var builtRim = true
     private var pageKey: KeyView? = null
-    private var morph: MorphTransitionController? = null
     /** One glass drawable per built input view: its AGSL layer and light animation are reused across applyBlur() calls. */
     private var shell: GlassSurfaceDrawable? = null
     /** Stage 4: edge refraction of the shell layer (API 33+, "Liquid refraction" setting). */
@@ -90,7 +88,6 @@ class PillboardService : InputMethodService() {
         builtDynamic = Prefs.dynamic(this)
         builtSeed = Prefs.seedColor(this)
         builtFx = Prefs.bool(this, "glass_fx", true)
-        builtRim = Prefs.bool(this, "glass_rim", true)
         shell = null
         themed = ContextThemeWrapper(this, if (builtDynamic) R.style.Theme_Pillboard else R.style.Theme_Pillboard_Static)
         tokens = KbTokens(themed)
@@ -101,8 +98,6 @@ class PillboardService : InputMethodService() {
         }
         root = r
         refraction = ShellRefraction(r, tokens.containerRadius)
-        morph?.cancel()
-        morph = MorphTransitionController(r)
         // Keep keys clear of the system navigation bar (fixes overlap on edge-to-edge Android 15+)
         ViewCompat.setOnApplyWindowInsetsListener(r) { _, insets ->
             navInset = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
@@ -118,7 +113,7 @@ class PillboardService : InputMethodService() {
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
-        if (Prefs.dynamic(this) != builtDynamic || Prefs.seedColor(this) != builtSeed || Prefs.bool(this, "glass_fx", true) != builtFx || Prefs.bool(this, "glass_rim", true) != builtRim) setInputView(onCreateInputView())
+        if (Prefs.dynamic(this) != builtDynamic || Prefs.seedColor(this) != builtSeed || Prefs.bool(this, "glass_fx", true) != builtFx) setInputView(onCreateInputView())
         symbols = false
         autoCap()
         applyBlur()
@@ -128,7 +123,6 @@ class PillboardService : InputMethodService() {
 
     override fun onFinishInputView(finishingInput: Boolean) {
         preview?.dismiss(immediate = true)
-        morph?.cancel()
         super.onFinishInputView(finishingInput)
     }
 
@@ -190,7 +184,6 @@ class PillboardService : InputMethodService() {
     // ---- layout ----
     private fun render(animateRows: Boolean = false) {
         val r = root ?: return
-        if (!animateRows) morph?.cancel()
         r.removeAllViews()
         letterKeys.clear(); shiftKey = null; pageKey = null
         val keyH = keyHeight()
@@ -217,11 +210,12 @@ class PillboardService : InputMethodService() {
         }
         r.addView(rowOf {
             pageKey = key(if (symbols) "ABC" else "123", keyH, 1.35f, KeyStyle.SPECIAL) {
-                val spec = pageKey?.let { morphSpec(it, if (symbols) "ABC" else "123", if (symbols) "123" else "ABC") }
+                // snapshot first: render() rebuilds the row, and a transition still running on the old key carries over
+                val from = if (symbols) "ABC" else "123"
+                val running = pageKey?.blurSnapshot()
                 symbols = !symbols
-                render(animateRows = true)
-                val nk = pageKey
-                if (spec != null && nk != null && animationsOn(this@PillboardService)) morph?.start(spec, nk)
+                render(animateRows = true)    // the new label is already in place; Blur Replace only changes what is painted
+                pageKey?.setTextBlur(if (symbols) "ABC" else "123", from = from, inherited = running)
             }
             key(",", keyH, 0.85f, KeyStyle.SPECIAL) { type(",") }
             key("space", keyH, 4.45f, KeyStyle.SPECIAL) { space() }.also { sp ->
@@ -248,7 +242,7 @@ class PillboardService : InputMethodService() {
             var n = 0
             for (idx in 0 until r.childCount) {
                 val v = r.getChildAt(idx)
-                if (v === strip || idx == r.childCount - 1) continue   // bottom row stays put; only the 123/ABC key morphs
+                if (v === strip || idx == r.childCount - 1) continue   // bottom row stays put; the 123/ABC label uses Blur Replace
                 v.alpha = 0f; v.translationY = 6.dp.toFloat()
                 v.animate().alpha(1f).translationY(0f).setStartDelay(n * 18L).setDuration(tokens.rowInMs)
                     .setInterpolator(DecelerateInterpolator()).start()
@@ -277,19 +271,6 @@ class PillboardService : InputMethodService() {
         isBaselineAligned = false
         layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
         build()
-    }
-
-    /** Visible rect of the 123/ABC key in root coordinates (the view is a full cell; the face is inset by the hit insets). */
-    private fun morphSpec(k: KeyView, from: String, to: String): LiquidMorphDrawable.Spec? {
-        val row = k.parent as? View ?: return null
-        if (k.width <= 0 || k.height <= 0) return null
-        val g = Prefs.int(this, "key_gap", 3)
-        val l = (row.left + k.left + g.dp).toFloat()
-        val t = (row.top + k.top + (g + 2).dp).toFloat()
-        val r = (row.left + k.right - g.dp).toFloat()
-        val b = (row.top + k.bottom - (g + 2).dp).toFloat()
-        return LiquidMorphDrawable.Spec(l, t, r, b, k.restRadiusPx, k.restFillColor, k.currentTextColor,
-            k.paint.textSize, k.typeface, from, to)
     }
 
     private fun LinearLayout.key(
@@ -372,7 +353,7 @@ class PillboardService : InputMethodService() {
         repeat(3) { i ->
             if (i > 0) addView(View(themed).apply { setBackgroundColor(tokens.divider) },
                 LinearLayout.LayoutParams(1.dp, 14.dp).apply { gravity = Gravity.CENTER_VERTICAL })
-            addView(TextView(themed).apply {
+            addView(BlurTextView(themed).apply {
                 gravity = Gravity.CENTER
                 textSize = 16f
                 maxLines = 1
@@ -393,20 +374,14 @@ class PillboardService : InputMethodService() {
         val word = currentWord()
         val list = Suggestions.forPrefix(word)
         for (i in 0 until 3) {
-            val tv = s.getChildAt(i * 2) as TextView
+            val tv = s.getChildAt(i * 2) as BlurTextView
             val sug = list.getOrNull(i)
             val nextText = sug ?: ""
-            // tv.tag = the text this slot is heading to; comparing against it (not the visible text)
-            // stops a still-running fade from restoring an outdated suggestion.
+            // tv.tag = the text this slot is heading to. Blur Replace sets the text at once and only animates the paint;
+            // changes faster than RAPID_GAP_MS (fast typing) snap, so typing never waits on the effect.
             if (tv.tag != nextText) {
                 tv.tag = nextText
-                tv.animate().cancel()
-                if (!animationsOn(this)) { tv.text = nextText; tv.alpha = 1f; tv.translationY = 0f }
-                else tv.animate().alpha(0f).translationY((-3).dp.toFloat()).setDuration(60).withEndAction {
-                    tv.text = tv.tag as? String ?: ""
-                    tv.translationY = 5.dp.toFloat()
-                    tv.animate().alpha(1f).translationY(0f).setDuration(tokens.flowMs).setInterpolator(tokens.flowSpring).start()
-                }.start()
+                tv.setTextBlur(nextText, minGapMs = BlurTextTokens.RAPID_GAP_MS)
             }
             tv.setOnClickListener(if (sug == null) null else View.OnClickListener {
                 lastFix = null

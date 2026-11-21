@@ -80,11 +80,6 @@ class SettingsActivity : Activity() {
                     "blur", false, enabled = true)
             },
             Item(Page.APPEARANCE, "Blur status", "blur glass system available blocked") { ui.info("Blur status", blurStatus()) },
-            Item(Page.APPEARANCE, "Glass rim", "glass rim edge perimeter chromatic dispersion fresnel specular highlight") {
-                ui.toggle("Glass rim",
-                    if (Build.VERSION.SDK_INT >= 33) "Curved glass edge with chromatic dispersion and a soft highlight" else "Simplified rim (full effect needs Android 13+)",
-                    "glass_rim", true, enabled = true, onChange = { refreshPreview() })
-            },
             Item(Page.APPEARANCE, "Press glow", "glow light press key shader") {
                 ui.toggle("Press glow",
                     if (Build.VERSION.SDK_INT >= 33) "The glass lights up around the key you press" else "Needs Android 13+",
