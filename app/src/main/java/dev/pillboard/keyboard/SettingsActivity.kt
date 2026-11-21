@@ -28,7 +28,7 @@ import androidx.core.view.WindowInsetsCompat
 class SettingsActivity : Activity() {
 
     private enum class Page(val label: String, val sub: String, val icon: Int = 0, val tile: Int = 0) {
-        HOME("Pillboard", ""),
+        HOME("Glimkey", ""),
         TYPING("Typing", "Suggestions, auto-correction, capitalization", R.drawable.ic_set_typing, 0xFF0A84FF.toInt()),
         TRANSLATE("Translation", "Online translate, target language", R.drawable.ic_translate, 0xFF32ADE6.toInt()),
         APPEARANCE("Appearance", "Colors, shape, spacing, height", R.drawable.ic_set_look, 0xFFBF5AF2.toInt()),
@@ -227,7 +227,7 @@ class SettingsActivity : Activity() {
         top.removeAllViews()
         status = null
         if (page == Page.HOME) {
-            top.addView(ui.title("Pillboard", 36f))
+            top.addView(ui.title("Glimkey", 36f))
             top.addView(ui.caption("Your keyboard, your style.").apply { setPadding(2.dp, 2.dp, 0, 16.dp) })
             val st = ui.badge().also { status = it }
             top.addView(ui.card(LinearLayout(this).apply {
@@ -260,7 +260,7 @@ class SettingsActivity : Activity() {
                     setImageResource(R.drawable.ic_chevron_right); rotation = 180f
                     imageTintList = ColorStateList.valueOf(ui.primary)
                 }, LinearLayout.LayoutParams(24.dp, 24.dp).apply { marginStart = (-6).dp })
-                addView(android.widget.TextView(context).apply { text = "Pillboard"; textSize = 17f; setTextColor(ui.primary) })
+                addView(android.widget.TextView(context).apply { text = "Glimkey"; textSize = 17f; setTextColor(ui.primary) })
                 setOnClickListener { go(Page.HOME) }
             }, LinearLayout.LayoutParams(-2, -2))
             top.addView(ui.title(page.label, 32f).apply { setPadding(2.dp, 4.dp, 0, 4.dp) })

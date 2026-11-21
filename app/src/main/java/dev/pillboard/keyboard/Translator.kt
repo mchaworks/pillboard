@@ -110,7 +110,7 @@ internal object Translator {
         try {
             conn.connectTimeout = 6000
             conn.readTimeout = 9000
-            conn.setRequestProperty("User-Agent", "Pillboard/1.0")
+            conn.setRequestProperty("User-Agent", "Glimkey/1.0")
             if (body != null) {
                 conn.requestMethod = "POST"
                 conn.doOutput = true

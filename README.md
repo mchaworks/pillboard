@@ -1,4 +1,4 @@
-# Pillboard
+# Glimkey
 
 An open-source Android keyboard with a rounded, Gboard-style layout:
 **Material 3 Expressive** shape-morphing keys + **iOS-flavoured** looks and behaviour.
@@ -23,7 +23,7 @@ gradle assembleDebug
 Output: `app/build/outputs/apk/debug/app-debug.apk`
 
 ## Enable
-Install the APK, open Pillboard, tap **Enable keyboard**, switch it on, then **Switch keyboard**.
+Install the APK, open Glimkey, tap **Enable keyboard**, switch it on, then **Switch keyboard**.
 
 ## Roadmap
 Emoji panel, more languages, learned suggestions. PRs welcome.
