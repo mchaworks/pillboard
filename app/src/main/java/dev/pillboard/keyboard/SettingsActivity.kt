@@ -29,12 +29,12 @@ class SettingsActivity : Activity() {
 
     private enum class Page(val label: String, val sub: String, val icon: Int = 0, val tile: Int = 0) {
         HOME("Glimkey", ""),
-        TYPING("Typing", "Suggestions, auto-correction, capitalization", R.drawable.ic_set_typing, 0xFF0A84FF.toInt()),
+        TYPING("Typing", "Suggestions, learning, auto-correction, capitalization", R.drawable.ic_set_typing, 0xFF0A84FF.toInt()),
         TRANSLATE("Translation", "Online translate, target language", R.drawable.ic_translate, 0xFF32ADE6.toInt()),
         APPEARANCE("Appearance", "Colors, shape, spacing, height", R.drawable.ic_set_look, 0xFFBF5AF2.toInt()),
         LAYOUT("Layout", "Number row, emoji key", R.drawable.ic_set_layout, 0xFFFF9F0A.toInt()),
         FEEDBACK("Feedback", "Haptics", R.drawable.ic_set_feedback, 0xFF30B650.toInt()),
-        ADVANCED("Advanced", "Reset settings, emoji history", R.drawable.ic_set_more, 0xFF8E8E93.toInt()),
+        ADVANCED("Advanced", "Learned words, reset, emoji history", R.drawable.ic_set_more, 0xFF8E8E93.toInt()),
         ABOUT("About", "Version and license", R.drawable.ic_set_info, 0xFF5AB8E8.toInt()),
     }
 
@@ -67,6 +67,9 @@ class SettingsActivity : Activity() {
     private val items: List<Item> by lazy {
         listOf(
             Item(Page.TYPING, "Suggestions", "word bar predictions") { ui.toggle("Suggestions", "Word bar above the keys", "suggest", true) },
+            Item(Page.TYPING, "Learn from typing", "learn personalize words adaptive memory privacy") {
+                ui.toggle("Learn from typing", "Remembers your words and word pairs on this device only. Never in password, email, web address or incognito fields.", "learn", true)
+            },
             Item(Page.TYPING, "Auto-capitalization", "capital sentence shift") { ui.toggle("Auto-capitalization", "Capital letter at the start of sentences", "autocap", true) },
             Item(Page.TYPING, "Double-space period", "dot full stop") { ui.toggle("Double-space period", "Tap space twice to insert a period", "dblspace", true) },
             Item(Page.TYPING, "Auto-correction", "fix typos undo") { ui.toggle("Auto-correction", "Fix common typos on space, backspace undoes", "autocorrect", true) },
@@ -129,6 +132,12 @@ class SettingsActivity : Activity() {
                 ui.slider("Key spacing", 2, 6, "key_gap", 3, listOf("Tight" to 2, "Standard" to 3, "Roomy" to 5)) { refreshPreview() }
             },
             Item(Page.FEEDBACK, "Haptic feedback", "vibration vibrate") { ui.toggle("Haptic feedback", "Vibrate on key press", "haptic", true) },
+            Item(Page.ADVANCED, "Clear learned words", "forget learned dictionary personal suggestions words reset") {
+                ui.link("Clear learned words", "Forget the words and word pairs the keyboard learned from you", chevron = false) {
+                    Suggestions.clearLearned(this)
+                    android.widget.Toast.makeText(this, "Learned words cleared", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            },
             Item(Page.ADVANCED, "Reset settings", "default restore") { ui.link("Reset settings", "Return all keyboard settings to default", chevron = false) { confirmReset() } },
             Item(Page.ABOUT, "Version", "build about") { ui.info("Version", versionName()) },
         )

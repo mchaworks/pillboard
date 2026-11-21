@@ -1,0 +1,125 @@
+# Glimkey dictionary: English.
+# Every file in assets/dict/ is loaded and active at the same time; the keyboard works out which language you are
+# writing from the text itself. To add a language, drop another <code>.txt next to this one. Nothing else to edit.
+#
+# Words: most common first (the rank sets the weight). "word:count" overrides the rank-based weight.
+# "@bi": next-word table, "previous: likely next words, best first". "^" means the start of a sentence.
+
+the to i you and a it of that in is for my me not on be do have with this but we so what are your i'm just can it's was he they at as if don't like all get will no about one up out know go yes now how think good when from there would okay or that's her him then she here his their why them really see want been had who did oh because well time right back could say make still much too even need take come never let's more some should look tell thing day any very only love please thanks thank sorry hello hi hey lol
+where were am going its over also after use two our work first way new these give most us people into year than other could them its
+what's i'll i've i'd you're you'll you've we're we'll they're they'll doesn't didn't can't won't wouldn't couldn't shouldn't isn't aren't wasn't weren't haven't hasn't hadn't there's here's who's how's he's she's we've they've let's ain't y'all
+home night morning great friend maybe again always something anything nothing everything everyone someone together tomorrow tonight today yesterday sometimes probably actually definitely already almost enough different important wait wanna gonna gotta lemme dunno cause tho tbh idk btw omg imo pls thx ty np brb ngl fyi asap dm
+yeah yep nope nah okay ok sure fine cool nice awesome amazing perfect beautiful happy sad angry tired hungry busy free late early ready sick bad best better worse worst little long big small old young high low hot cold
+call called calling text texted message send sent receive got getting gets went gone goes coming came comes take took taken taking give gave given giving tell told telling ask asked asking answer answered find found finding keep kept keeping leave left leaving put let try tried trying use used using help helped helping
+eat ate eating drink drank sleep slept sleeping wake woke walk walked walking run ran running drive drove driving play played playing watch watched watching read reading write wrote writing listen listened hear heard talk talked talking speak spoke meet met meeting stay stayed live lived living
+love loved hate hated like liked miss missed feel felt feeling believe hope hoped wish wished care cared mean meant understand understood remember remembered forget forgot decide decided change changed start started stop stopped finish finished open opened close closed turn turned move moved
+man woman boy girl child children kid kids baby mom dad mother father brother sister family friends girlfriend boyfriend wife husband husband people person guy guys everybody somebody nobody anybody
+house room door window car bus train plane road street city town country world place school class teacher student college university office job boss company money phone computer laptop game games movie movies music song songs video photo picture pictures book books food water coffee tea lunch dinner breakfast bed
+week weekend month months years days hours hour minute minutes second seconds moment while until since before during between within without around through another every each both either neither many few several enough less least lot lots plenty
+monday tuesday wednesday thursday friday saturday sunday january february march april may june july august september october november december
+one two three four five six seven eight nine ten hundred thousand million first second third last next previous
+because though although however therefore instead otherwise unless whether while whatever whenever wherever whoever whichever
+able accept account across add afraid age ago agree ahead air allow alone along among apart appear area arm arrive art attention away
+bag ball bank base beat become begin behind believe below beside best bit black blue body bring build buy
+card carry case catch cause center certain chance check choice choose clean clear clothes color comes common complete control cost count course cover create cut
+dark dead deal dear deep die dollar doing down draw dream dress during
+ear earth easy edge effect either else end enjoy enough entire especially evening event ever exactly example except excited expect experience eye
+face fact fall far fast fear feel field fight figure fill final fire fish fit fix floor follow foot force forward free fresh front full fun future
+garden gift glad glass goal god gold ground group grow guess
+hair half hand hang happen happened hard head health heart heavy held hide hold hurt
+idea imagine include inside interest interesting invite issue item
+join joke jump
+key kill kind knew knock
+land language large laugh lay learn lie life light line list local lose lost loud lovely lucky
+mad main matter mind mine miss mistake mine mouth music
+name near need neither nervous news nice normal notice number
+office official oh once online order outside own
+pain paper parents part party pass past pay perfect personal piece plan please point police poor possible power pretty price problem promise proud pull push
+question quick quiet quite
+rain reach real reason red relax rest rich ride ring rise rock roll rule
+safe same save season seat secret seem sell set share sharing shirt shoes shop short shot show side sign simple sing single sit size skin sky slow smile soft soon sound space special spend sport spring stand star state step still stone store story strange strong study stuff success such suddenly summer sun sure surprise sweet
+table tall taste team test thanks thinking thought throw tip today tonight touch town trip trouble true trust truth try
+usually view visit voice vote
+wall warm wash wear weather wedding welcome west whole wide win wind winter wonder wonderful wood word worry worth wrong
+yard yes yet young yourself myself himself herself ourselves themselves
+
+@bi
+^: i the it we you what so thanks yes ok hey hi hello but do how can are please that this my if when why where just no oh
+i: am have think don't will love want can was just need know mean feel got hope guess didn't had miss would see like
+i'm: not so sorry going just a here at in on really sure gonna glad fine good
+i'll: be see call text send let do try get
+i've: been got had never always just seen
+i'd: like love be say rather
+you: are can have know want will need should like do were just guys too
+you're: so a not the welcome right going
+we: are can have need will should were could might don't
+we're: going not all here in
+they: are were have will don't said want
+he: is was has said will had can
+she: is was has said will had can
+it: is was will not just would can doesn't
+it's: a not the so been just my time like
+that: is was i the you's we they
+that's: a the not so what why right fine great
+this: is was one time week morning year weekend
+what: is are do did the about happened time
+what's: up the going wrong that your new
+the: best same only first most other next one way last end new whole
+a: lot little bit few good great new long
+to: be do the get go see have make me know say take your
+of: the course my a all it our
+in: the a my your case time front fact
+on: the my a your it time monday
+for: the a me you your my now
+with: the me you a my your us
+and: i the then you we it then a
+but: i the it you i'm we then
+so: i the much what you we far
+if: you i the it we they
+do: you not i we they it
+don't: know want have think worry like forget
+can: you i we be do not
+can't: wait believe do find stop
+will: be do you see have get
+would: be you have like love
+could: you be you've have we
+should: be i we have
+have: a to you the been any
+has: been a to the
+had: a to the been
+is: it the this that there a not
+are: you we they there the not
+was: a the it there so just
+be: a the there able in so
+not: a the sure really going
+just: a the want got wanted like
+want: to a you the some
+need: to a you the some help
+going: to be on out home
+go: to home out back ahead
+get: a the it to back some
+got: a the it to you
+good: morning night luck job to
+thank: you u god
+thanks: for a so you man
+please: help let don't tell send
+sorry: i for about
+how: are is do was to about much many
+where: are is do you
+who: is are was
+why: do are is not
+when: you i the is
+see: you the it what
+love: you it the this
+hello: there how
+hi: there how guys
+hey: there how guys
+happy: birthday new to
+talk: to about later
+let: me us you
+let's: go see do talk
+me: know to a the too
+my: name friend mom dad phone love
+your: name phone friend mom
+there: is are was will
+here: is are we you

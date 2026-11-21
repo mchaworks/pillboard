@@ -1,0 +1,102 @@
+# Glimkey dictionary: Bahasa Indonesia (baku + obrolan sehari-hari).
+# Semua file di assets/dict/ dimuat bersamaan; bahasa yang dipakai dikenali otomatis dari teks yang diketik.
+# Format sama seperti en.txt: kata paling sering dulu, "kata:jumlah" opsional, "@bi" untuk tabel kata berikutnya ("^" = awal kalimat).
+
+yang di dan itu ini aku saya kamu tidak apa ada untuk dengan ke dari dalam bisa udah sudah aja saja kita juga mau kalau lagi nanti jadi sama banget gak ga nggak gue gw lo lu dia mereka kami kak ya iya oke ok deh sih dong kok kan nih tuh pas buat terus tapi tetapi karena atau akan harus bukan belum masih lebih sangat semua banyak sedikit setiap seperti kayak gimana bagaimana kenapa mengapa kapan siapa dimana mana berapa sekarang tadi besok kemarin hari malam pagi siang sore
+yg:30000 bgt:26000 dgn:15000 krn:9000 utk:12000 sm:8000 tp:12000 jg:9000 blm:9000 udh:14000 trs:8000 kyk:9000 gmn:9000 knp:9000 kpn:6000 dmn:5000 sdh:6000 jgn:9000 org:6000 hrs:5000 bs:7000 lg:12000 sy:7000 gk:16000 tdk:10000 smpe:5000 skrg:6000 skrng:5000 nnti:5000 ntar:6000 bsk:5000 kmrn:4000 brp:5000 bkn:5000 gpp:5000 gapapa:6000 wkwk:12000 anjir:3000 anjay:3000 santuy:1500 mager:3000 baper:3000 gabut:3000 receh:1500 kuy:3000 sabi:2500 gaje:2000 bucin:2000 pov:2000 spill:1500
+oleh pada sebagai dalam antara hingga sampai sejak selama sebelum setelah sesudah ketika saat waktu jika bila agar supaya namun melainkan sehingga maka bahwa walaupun meskipun sedangkan sambil lalu kemudian akhirnya pertama kedua ketiga
+anda beliau kalian kamu engkau dirimu dirinya kami kita mereka sendiri semua siapa apa mana kenapa
+ada adalah ialah merupakan menjadi jadi punya memiliki mempunyai dapat bisa boleh harus perlu mesti wajib ingin mau pengen pingin hendak suka senang sayang cinta benci takut
+tidak bukan belum jangan tak enggak engga gak nggak ga gk kagak
+sudah udah udh dah telah lagi sedang lg tengah akan bakal mau pernah baru masih tetap selalu sering kadang jarang biasanya tiba tiba langsung segera cepat lambat pelan
+ini itu sini situ sana begini begitu gini gitu begitu demikian
+satu dua tiga empat lima enam tujuh delapan sembilan sepuluh seratus seribu juta pertama terakhir
+makan minum tidur bangun mandi jalan pergi pulang datang masuk keluar naik turun duduk berdiri lari main belajar kerja bekerja baca membaca tulis menulis lihat melihat dengar mendengar bicara berbicara ngomong bilang kata berkata tanya bertanya jawab menjawab cari mencari ambil mengambil kasih memberi beri bawa membawa pakai memakai buka membuka tutup menutup beli membeli jual menjual bayar membayar kirim mengirim terima menerima tunggu menunggu ingat mengingat lupa tahu tau paham mengerti pikir berpikir rasa merasa coba mencoba bantu membantu tolong minta meminta ajak mengajak temu bertemu kenal mengenal hubungi telepon telpon chat
+rumah sekolah kampus kelas kantor kota desa jalan pasar toko warung kamar dapur kamar mandi kebun taman jalanan sawah pantai gunung laut sungai
+orang teman sahabat keluarga ibu bapak ayah mama papa mami papi kakak adik abang kakak nenek kakek paman bibi om tante anak bayi laki perempuan cowok cewek cewe cowo pacar suami istri guru murid siswa dosen mahasiswa bos
+bang mas mbak bro sis gan guys bestie sob ente
+hari ini minggu bulan tahun jam menit detik pagi siang sore malam kemarin besok lusa sekarang nanti tadi barusan dulu kelak
+senin selasa rabu kamis jumat sabtu minggu januari februari maret april mei juni juli agustus september oktober november desember
+baik bagus jelek buruk besar kecil panjang pendek tinggi rendah baru lama tua muda cantik ganteng indah senang sedih marah capek lelah lapar haus kenyang sakit sehat sibuk santai bosan malas rajin pintar bodoh bego gila keren mantap asik seru lucu lucu enak nggak enak mahal murah dekat jauh cepat lambat mudah gampang susah sulit sama beda berbeda penting benar bener salah betul pasti mungkin kayaknya sepertinya
+terima kasih makasih makasi thanks thx sama sama maaf sori sorry tolong permisi selamat pagi siang sore malam datang tinggal jumpa halo hai hei woi eh wah waduh aduh astaga ya ampun wkwk wkwkwk haha hehe hihi kwkw awokawok ciee cie yaudah ya udah yaudah
+tugas ujian ulangan pelajaran materi buku pensil pulpen bolpen kertas papan tulis soal jawaban nilai rapor remedial sekolah osis ekskul upacara kelompok presentasi laporan proyek
+hp handphone ponsel laptop komputer internet wifi kuota sinyal aplikasi game video foto gambar lagu musik film drama berita medsos instagram whatsapp wa tiktok youtube
+uang duit rupiah ribu ribuan harga gaji kerja pekerjaan usaha bisnis
+makanan minuman nasi mie bakso soto sate ayam ikan telur sayur buah kopi teh susu air roti kue es gorengan sambal pedas manis asin
+dengan tanpa kepada terhadap tentang mengenai demi bagi untuk menurut seperti bagaikan daripada dibanding
+sedikit banyak beberapa sebagian seluruh semuanya segala tiap masing berbagai lain lainnya
+hanya cuma cuman saja juga pun bahkan apalagi terutama khususnya misalnya contohnya
+sangat banget amat sekali terlalu agak cukup kurang paling lebih makin semakin
+bisa bisanya jadinya makanya soalnya padahal ternyata rupanya mungkin pasti tentu tentunya memang emang emangnya kok kan dong deh sih lah kah toh
+ayo yuk mari ayok hayuk silakan silahkan
+membuat bikin buat membuat menggunakan digunakan dibuat dibilang dikasih diambil dilihat didengar diminta dikirim ditunggu dicari dipakai
+berapa mulai memulai selesai menyelesaikan berhenti berhentilah lanjut melanjutkan ganti mengganti ubah mengubah
+sebentar bentar sebentar lagi nanti ya entar ntar bentar
+kamu apa kabar baik kabarnya
+kemana ke mana dari mana di mana sama siapa kenapa gitu gimana begitu
+ketemu ketemuan jalan jalan nongkrong kumpul ngumpul main bareng bareng sendirian
+
+@bi
+^: aku saya kamu apa ini itu yang kita dia kalau tapi oke iya terima selamat halo kak gimana kenapa nanti jangan
+aku: mau udah gak nggak lagi bisa akan punya suka harus sedang tau ga pengen
+saya: akan mau tidak sudah ingin bisa punya harus sedang
+gue: mau udah gak lagi bisa punya suka harus
+gw: mau udah gak lagi bisa punya suka harus
+kamu: udah lagi mau bisa gak tidak sudah ada harus lagi
+lo: udah lagi mau bisa gak punya harus
+kita: bisa harus akan mau semua ke jalan makan
+kami: akan sudah tidak bisa mau
+dia: udah lagi mau bisa gak tidak sudah ada
+mereka: akan sudah tidak bisa mau semua
+yang: ada di itu lagi udah sudah paling mana lebih akan penting
+ini: yang itu adalah udah dia aku
+itu: yang adalah udah kan aja
+dan: yang aku saya kamu juga di lain
+di: sini sana rumah mana situ sekolah kantor
+ke: sini sana rumah mana situ sekolah kantor
+dari: sini sana mana rumah situ
+untuk: kamu saya aku semua kita
+dengan: kamu saya aku cara baik
+tidak: ada bisa tahu mau usah apa
+gak: ada bisa tau mau usah apa
+nggak: ada bisa tau mau usah apa
+ga: ada bisa tau mau usah apa
+ada: yang apa di banyak yg
+apa: yang kamu itu ini aja lagi kabar
+udah: makan selesai tau sampe jadi dong
+sudah: selesai makan tahu sampai jadi
+lagi: apa di makan ngapain dimana jalan
+mau: apa ke makan pergi ikut tau
+bisa: kamu aku tolong nggak gak jadi
+kalau: kamu aku kita ada tidak udah
+karena: itu aku saya kamu tidak
+tapi: aku saya kamu gak nggak itu
+terima: kasih
+makasih: ya banyak kak udah
+selamat: pagi siang sore malam ulang datang tinggal
+sampai: jumpa nanti rumah sini
+sampe: rumah sini nanti jumpa
+sama: sama aku kamu dia
+oke: deh siap kak
+iya: deh sih kak aku
+ya: udah deh sih kak aku
+siap: kak bang pak bu
+halo: kak semua guys
+hai: kak semua guys
+kak: aku saya boleh bisa mau
+bang: aku saya boleh bisa mau
+nanti: aku saya kita kamu ya aja
+besok: aku saya kita kamu ya aja
+hari: ini ya
+sekarang: aku saya kita kamu udah
+ibu: guru saya aku
+bapak: guru saya aku
+guru: bahasa matematika
+tolong: bantu kirim jawab kasih
+maaf: ya ya banget kak aku
+gimana: kabar kalau caranya
+bagaimana: kabar kalau caranya
+kenapa: kamu aku sih ya gak
+kapan: kamu kita mau
+dimana: kamu kita
+berapa: harganya banyak lama

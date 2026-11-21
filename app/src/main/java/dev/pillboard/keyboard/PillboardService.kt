@@ -51,16 +51,6 @@ class PillboardService : InputMethodService() {
             "-" to listOf("–", "—", "•"), "$" to listOf("€", "£", "¥", "¢"),
             "&" to listOf("§"), "0" to listOf("°"),
         )
-
-        /** Small built-in auto-correct list (applied on space; backspace right after undoes it). */
-        val FIXES = mapOf(
-            "teh" to "the", "adn" to "and", "thier" to "their", "becuase" to "because", "recieve" to "receive",
-            "definately" to "definitely", "wierd" to "weird", "freind" to "friend", "alot" to "a lot",
-            "tommorow" to "tomorrow", "dont" to "don't", "cant" to "can't", "wont" to "won't", "didnt" to "didn't",
-            "doesnt" to "doesn't", "isnt" to "isn't", "wasnt" to "wasn't", "couldnt" to "couldn't",
-            "shouldnt" to "shouldn't", "wouldnt" to "wouldn't", "youre" to "you're", "theyre" to "they're",
-            "thats" to "that's", "im" to "I'm", "ive" to "I've", "i" to "I",
-        )
     }
 
     private enum class Shift { OFF, ON, LOCK }
@@ -111,6 +101,12 @@ class PillboardService : InputMethodService() {
     /** Stage 4: edge refraction of the shell layer (API 33+, "Liquid refraction" setting). */
     private var refraction: ShellRefraction? = null
 
+    override fun onCreate() {
+        super.onCreate()
+        // dictionaries load off the main thread; the strip fills in as soon as they are ready
+        Suggestions.init(applicationContext) { trHandler.post { updateStrip() } }
+    }
+
     override fun onCreateInputView(): View {
         refraction?.release()
         refraction = null
@@ -156,6 +152,7 @@ class PillboardService : InputMethodService() {
         preview?.dismiss(immediate = true)
         emojiGrid?.dismissTones()
         stopTranslateState()
+        Suggestions.save()
         super.onFinishInputView(finishingInput)
     }
 
@@ -183,6 +180,7 @@ class PillboardService : InputMethodService() {
         blurListener = null
         refraction?.release(); refraction = null
         trExec.shutdownNow()
+        Suggestions.save()
         super.onDestroy()
     }
 
@@ -805,36 +803,60 @@ class PillboardService : InputMethodService() {
         }
     }
 
-    private fun currentWord(): String {
-        val before = currentInputConnection?.getTextBeforeCursor(30, 0)?.toString() ?: ""
-        return before.takeLastWhile { it.isLetter() || it == '\'' }
+    /** The text around the caret, read by the suggestion engine (language is inferred from it, never from the system). */
+    private fun suggestionCtx(): SuggestCore.Ctx =
+        Suggestions.context(currentInputConnection?.getTextBeforeCursor(120, 0) ?: "")
+
+    /** Learn only where it is safe: not in passwords, emails, URLs, search filters, "no suggestions" or incognito fields. */
+    private fun learningAllowed(): Boolean {
+        if (!Prefs.bool(this, "learn", true) || !suggestionsAllowed()) return false
+        val ei = currentInputEditorInfo ?: return false
+        if (ei.imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING != 0) return false
+        val t = ei.inputType
+        if (t and InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS != 0) return false
+        return when (t and InputType.TYPE_MASK_VARIATION) {
+            InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS,
+            InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS,
+            InputType.TYPE_TEXT_VARIATION_URI,
+            InputType.TYPE_TEXT_VARIATION_FILTER -> false
+            else -> true
+        }
+    }
+
+    /** A word was just finished (space, punctuation, enter): the engine remembers it and which word came before. */
+    private fun learnWord(c: SuggestCore.Ctx) {
+        if (c.word.isNotEmpty() && learningAllowed()) Suggestions.learn(c, c.word)
     }
 
     private fun updateStrip() {
         if (emojiMode) { if (emojiSearch) updateSearchBar(); return }
         if (translateMode) return
         val s = strip ?: return
-        val word = currentWord()
-        val list = if (Prefs.bool(this, "suggest", true)) Suggestions.forPrefix(word) else emptyList()
+        val c = suggestionCtx()
+        val res = if (Prefs.bool(this, "suggest", true)) Suggestions.suggest(c) else null
         for (i in 0 until 3) {
             val tv = s.getChildAt(i * 2) as BlurTextView
-            val sug = list.getOrNull(i)
-            val nextText = sug ?: ""
+            val cand = res?.slot(i)          // slot 1 (centre) is the lead candidate
+            val nextText = cand?.label ?: ""
             // tv.tag = the text this slot is heading to. Blur Replace sets the text at once and only animates the paint;
             // changes faster than RAPID_GAP_MS (fast typing) snap, so typing never waits on the effect.
             if (tv.tag != nextText) {
                 tv.tag = nextText
                 tv.setTextBlur(nextText, minGapMs = BlurTextTokens.RAPID_GAP_MS)
             }
-            tv.setOnClickListener(if (sug == null) null else View.OnClickListener {
-                lastFix = null
-                currentInputConnection?.let { ic ->
-                    ic.deleteSurroundingText(word.length, 0)
-                    ic.commitText("$sug ", 1)
-                }
-                afterEdit()
-            })
+            tv.setOnClickListener(if (cand == null) null else View.OnClickListener { applySuggestion(c, cand) })
         }
+    }
+
+    private fun applySuggestion(c: SuggestCore.Ctx, cand: SuggestCore.Cand) {
+        lastFix = null
+        currentInputConnection?.let { ic ->
+            ic.deleteSurroundingText(c.word.length, 0)
+            ic.commitText("${cand.text} ", 1)
+        }
+        // tapping the quoted literal means "this is a real word": remember it with extra weight
+        if (learningAllowed()) Suggestions.learn(c, cand.text, if (cand.kind == SuggestCore.Kind.LITERAL) 2f else 1f)
+        afterEdit()
     }
 
     // ---- actions ----
@@ -850,6 +872,8 @@ class PillboardService : InputMethodService() {
     private fun type(s: String) {
         if (emojiSearch) { query.append(s.lowercase()); updateSearchBar(); return }
         lastFix = null
+        // punctuation ends a word: learn it before the mark goes in
+        if (s.length == 1 && !s[0].isLetterOrDigit() && s[0] != '\'' && s[0] != '’') learnWord(suggestionCtx())
         currentInputConnection?.commitText(s, 1)
         afterEdit()
     }
@@ -861,6 +885,7 @@ class PillboardService : InputMethodService() {
         if (fix != null && ic != null && ic.getTextBeforeCursor(fix.second.length, 0)?.toString() == fix.second) {
             ic.deleteSurroundingText(fix.second.length, 0)   // undo auto-correct: restore what was typed
             ic.commitText(fix.first, 1)
+            if (learningAllowed()) Suggestions.undoCorrection(fix.first)    // their spelling wins from now on
             afterEdit(); return
         }
         sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
@@ -871,7 +896,9 @@ class PillboardService : InputMethodService() {
     private fun space() {
         if (emojiSearch) { if (query.isNotEmpty() && query.last() != ' ') query.append(' '); updateSearchBar(); return }
         val ic = currentInputConnection ?: return
-        if (Prefs.bool(this, "autocorrect", true) && suggestionsAllowed() && autoCorrect(ic)) { afterEdit(); return }
+        val c = suggestionCtx()
+        if (Prefs.bool(this, "autocorrect", true) && suggestionsAllowed() && autoCorrect(ic, c)) { afterEdit(); return }
+        learnWord(c)
         lastFix = null
         val before = ic.getTextBeforeCursor(2, 0)?.toString() ?: ""
         if (Prefs.bool(this, "dblspace", true) && before.length == 2 && before[1] == ' ' && before[0].isLetterOrDigit()) {
@@ -883,20 +910,19 @@ class PillboardService : InputMethodService() {
         afterEdit()
     }
 
-    private fun autoCorrect(ic: android.view.inputmethod.InputConnection): Boolean {
-        val word = currentWord()
-        if (word.isEmpty()) return false
-        val fix = FIXES[word.lowercase()] ?: return false
-        val out = if (word != "i" && word[0].isUpperCase()) fix.replaceFirstChar { it.uppercase() } else fix
-        if (out == word) return false
-        ic.deleteSurroundingText(word.length, 0)
+    /** The engine decides (typo distance on this keyboard, language mix, what the person already uses); backspace undoes it. */
+    private fun autoCorrect(ic: android.view.inputmethod.InputConnection, c: SuggestCore.Ctx): Boolean {
+        val out = Suggestions.autoCorrection(c) ?: return false
+        ic.deleteSurroundingText(c.word.length, 0)
         ic.commitText("$out ", 1)
-        lastFix = word to "$out "
+        lastFix = c.word to "$out "
+        if (learningAllowed()) Suggestions.learn(c, out)
         return true
     }
 
     private fun enter() {
         if (emojiSearch) { setEmoji(true); return }
+        learnWord(suggestionCtx())
         lastFix = null
         if (!sendDefaultEditorAction(true)) sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
         afterEdit()
