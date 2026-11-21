@@ -28,9 +28,9 @@ class SettingsActivity : Activity() {
         HOME("Pillboard", ""),
         TYPING("Typing", "Suggestions, auto-correction, capitalization"),
         APPEARANCE("Appearance", "Colors, shape, spacing, height"),
-        LAYOUT("Layout", "Number row"),
+        LAYOUT("Layout", "Number row, emoji key"),
         FEEDBACK("Feedback", "Haptics"),
-        ADVANCED("Advanced", "Reset settings"),
+        ADVANCED("Advanced", "Reset settings, emoji history"),
         ABOUT("About", "Version and license"),
     }
 
@@ -68,6 +68,8 @@ class SettingsActivity : Activity() {
             Item(Page.TYPING, "Auto-correction", "fix typos undo") { ui.toggle("Auto-correction", "Fix common typos on space, backspace undoes", "autocorrect", true) },
             Item(Page.TYPING, "Space bar cursor", "slide swipe cursor move space") { ui.toggle("Space bar cursor", "Slide on the space bar to move the cursor", "spaceslide", true) },
             Item(Page.LAYOUT, "Number row", "digits numbers top") { ui.toggle("Number row", "Show 1–0 above the letters", "numrow", false) },
+            Item(Page.LAYOUT, "Emoji key", "emoji smiley picker button") { ui.toggle("Emoji key", "Emoji button next to 123", "emoji", true) },
+            Item(Page.ADVANCED, "Clear recent emoji", "emoji recent history forget") { ui.link("Clear recent emoji", "Forget the emoji you used lately", chevron = false) { EmojiData.clearRecents(this) } },
             Item(Page.APPEARANCE, "Material You colors", "dynamic wallpaper theme") {
                 ui.toggle("Material You colors",
                     if (Build.VERSION.SDK_INT >= 31) "Follow your wallpaper accent" else "Needs Android 12+, using default palette",

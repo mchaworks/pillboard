@@ -2,6 +2,9 @@ package dev.pillboard.keyboard
 
 import android.view.animation.PathInterpolator
 
+/** Direction the label travels during Blur Replace: the old one leaves along it, the new one arrives along it. */
+internal enum class BlurDir(val mx: Float, val my: Float) { UP(0f, -1f), DOWN(0f, 1f), LEFT(-1f, 0f), RIGHT(1f, 0f) }
+
 /** Every tunable of the Blur Replace text transition (iOS 26 `.blurReplace` feel) in one place. */
 internal object BlurTextTokens {
     const val MAX_BLUR_DP = 6f        // blur radius of fully departed / not yet arrived text
@@ -10,7 +13,7 @@ internal object BlurTextTokens {
     const val IN_MS = 260L            // arrival
     const val IN_DELAY_MS = 60L       // arrival starts a little after departure: never two opaque labels at once
     const val SCALE_MIN = 0.90f       // scale of fully blurred text (old shrinks into it, new settles out of it)
-    const val SHIFT_DP = 2f           // small vertical drift: old drifts up, new rises from below
+    const val SHIFT_DP = 5f           // drift distance along the transition direction (see [BlurDir])
     const val RAPID_GAP_MS = 160L     // changes closer than this (fast typing) snap instead of animating
     const val TOTAL_MS = IN_DELAY_MS + IN_MS   // whole text transition; the keycap shape morph runs on the same length
     const val MAX_OUTGOING = 2        // old labels kept alive during rapid changes

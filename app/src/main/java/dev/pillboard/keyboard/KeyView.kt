@@ -270,8 +270,8 @@ class KeyView(
         shape.setColors(oldColors)
         setCorners(cFrom[0], cFrom[1], cFrom[2], cFrom[3])
         morph = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = t.releaseMs
-            interpolator = t.spring
+            duration = BlurTextTokens.TOTAL_MS        // same smooth timeline as the label: no spring, no overshoot
+            interpolator = BlurTextTokens.inEase
             addUpdateListener {
                 val f = it.animatedFraction
                 val fc = f.coerceIn(0f, 1f)
@@ -343,9 +343,10 @@ class KeyView(
      * not change, or when the change snaps (fast typing, animations off). Touch handling is untouched.
      */
     internal fun morphLabel(l: String, from: CharSequence? = null, minGapMs: Long = 0L,
-                            inherited: List<BlurTextLayer>? = null, oldW: Int = 0, oldH: Int = 0) {
+                            inherited: List<BlurTextLayer>? = null, oldW: Int = 0, oldH: Int = 0, syncDelay: Boolean = false, dir: BlurDir = BlurDir.UP) {
         contentDescription = l
-        if (setTextBlur(l, from, minGapMs, inherited)) startShapeMorph(oldW, oldH)
+        // the body only morphs when its size really changes (new page); a same-size key just flows its label
+        if (setTextBlur(l, from, minGapMs, inherited, syncDelay, dir) && (oldW > 0 || oldH > 0 || shapeClock?.isRunning == true)) startShapeMorph(oldW, oldH)
     }
 
     // ---- keycap shape morph: one clock, extras of the body (size around its centre) + Bezier bulge ----
@@ -391,8 +392,7 @@ class KeyView(
         }
         val p = ((now - shapeStart).toFloat() / BlurTextTokens.TOTAL_MS).coerceIn(0f, 1f)
         val e = 1f - BlurTextTokens.inEase.getInterpolation(p)                       // size settles early, softly
-        val bulge = kotlin.math.sin(Math.PI * Math.pow(p.toDouble(), 0.8)).toFloat()   // peaks while the label swaps
-        shape.setMorph(shapeDW0 * e, shapeDH0 * e, if (p >= 1f) 0f else bulge)
+        shape.setMorph(shapeDW0 * e, shapeDH0 * e, 0f)       // pure size flow; the old squash bulge felt like a bounce
         invalidate()
         if (p >= 1f) stopShapeMorph()
     }

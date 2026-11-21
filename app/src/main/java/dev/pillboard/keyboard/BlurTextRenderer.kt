@@ -26,10 +26,12 @@ internal class BlurTextLayer(var text: CharSequence, val sign: Int) {
     var delay = 0L
     var dur = 1L
     var outgoing = false
+    var mx = 0f             // travel direction (unit vector, screen coords), see [BlurDir]
+    var my = -1f
     var node: Any? = null   // API 31+ RenderNode holder (see [NodeHolder])
 
     fun copy() = BlurTextLayer(text, sign).also {
-        it.s = s; it.from = from; it.to = to; it.startAt = startAt; it.delay = delay; it.dur = dur; it.outgoing = outgoing
+        it.s = s; it.from = from; it.to = to; it.startAt = startAt; it.delay = delay; it.dur = dur; it.outgoing = outgoing; it.mx = mx; it.my = my
     }
 }
 
@@ -96,7 +98,10 @@ internal class BlurTextRenderer(private val density: Float) {
         }
 
         val scale = 1f - (1f - BlurTextTokens.SCALE_MIN) * s
-        val ty = l.sign * BlurTextTokens.SHIFT_DP * density * s
+        // outgoing (sign -1) travels along the direction, incoming (sign +1) starts behind it and travels along it too
+        val dist = -l.sign * BlurTextTokens.SHIFT_DP * density * s
+        val tx = l.mx * dist
+        val ty = l.my * dist
         val px = x + tw / 2f
         val py = y + (fm.ascent + fm.descent) / 2f
         val step = BlurTextTokens.BLUR_STEP_PX
@@ -104,14 +109,14 @@ internal class BlurTextRenderer(private val density: Float) {
 
         if (radius > 0f && Build.VERSION.SDK_INT >= 31 && !nodeFailed && canvas.isHardwareAccelerated) {
             try {
-                drawNode(canvas, l, txt, x, y, w, h, alpha, scale, ty, px, py, radius)
+                drawNode(canvas, l, txt, x, y, w, h, alpha, scale, tx, ty, px, py, radius)
                 return
             } catch (e: Throwable) {
                 nodeFailed = true       // fall through to the plain path from now on
             }
         }
         val save = canvas.save()
-        canvas.translate(0f, ty)
+        canvas.translate(tx, ty)
         canvas.scale(scale, scale, px, py)
         paint.alpha = (baseAlpha * alpha).toInt().coerceIn(0, 255)
         canvas.drawText(txt, 0, txt.length, x, y, paint)
@@ -121,7 +126,7 @@ internal class BlurTextRenderer(private val density: Float) {
     @RequiresApi(31)
     private fun drawNode(
         canvas: Canvas, l: BlurTextLayer, txt: CharSequence, x: Float, y: Float, w: Int, h: Int,
-        alpha: Float, scale: Float, ty: Float, px: Float, py: Float, radius: Float,
+        alpha: Float, scale: Float, tx: Float, ty: Float, px: Float, py: Float, radius: Float,
     ) {
         val hold = (l.node as? NodeHolder) ?: NodeHolder().also { l.node = it }
         val n = hold.node
@@ -145,6 +150,7 @@ internal class BlurTextRenderer(private val density: Float) {
         }
         n.setPivotX(px); n.setPivotY(py)
         n.setScaleX(scale); n.setScaleY(scale)
+        n.setTranslationX(tx)
         n.setTranslationY(ty)
         n.setAlpha(alpha)
         canvas.drawRenderNode(n)

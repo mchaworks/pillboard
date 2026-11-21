@@ -30,8 +30,10 @@ internal class BlurTextTransition(private val host: TextView) {
     /**
      * Start heading to [next]. [from] is the label on screen now (used only when nothing is running);
      * [inherited] is a [snapshot] of a transition that was running on a view this one replaces.
+     * [syncDelay]: arrive with the same delay as a key that has a departing label, even if this one has none
+     * (a key without a counterpart on the old page), so the whole page lands together.
      */
-    fun change(next: CharSequence, from: CharSequence?, inherited: List<BlurTextLayer>? = null) {
+    fun change(next: CharSequence, from: CharSequence?, inherited: List<BlurTextLayer>? = null, syncDelay: Boolean = false, dir: BlurDir = BlurDir.UP) {
         val now = SystemClock.uptimeMillis()
         val laid = host.width > 0
         if (inherited != null && layers.isEmpty()) layers.addAll(inherited)
@@ -46,7 +48,7 @@ internal class BlurTextTransition(private val host: TextView) {
         }
         if (layers.isEmpty() && !from.isNullOrEmpty()) {
             layers.add(BlurTextLayer(from, -1).also {
-                it.outgoing = true; it.from = 0f; it.to = 1f; it.dur = BlurTextTokens.OUT_MS
+                it.outgoing = true; it.from = 0f; it.to = 1f; it.dur = BlurTextTokens.OUT_MS; it.mx = dir.mx; it.my = dir.my
                 it.startAt = if (laid) now else -1L
             })
         }
@@ -55,9 +57,9 @@ internal class BlurTextTransition(private val host: TextView) {
             renderer.release(worst); layers.remove(worst)
         }
         if (next.isNotEmpty()) {
-            val d = if (layers.isEmpty()) 0L else BlurTextTokens.IN_DELAY_MS
+            val d = if (layers.isEmpty() && !syncDelay) 0L else BlurTextTokens.IN_DELAY_MS
             layers.add(BlurTextLayer(next, 1).also {
-                it.s = 1f; it.from = 1f; it.to = 0f; it.dur = BlurTextTokens.IN_MS; it.delay = d
+                it.s = 1f; it.from = 1f; it.to = 0f; it.dur = BlurTextTokens.IN_MS; it.delay = d; it.mx = dir.mx; it.my = dir.my
                 it.startAt = if (laid) now + d else -1L
             })
         }
@@ -124,7 +126,7 @@ open class BlurTextView(context: Context) : TextView(context) {
      * Changes closer than [minGapMs] to the previous one snap instead (typing responsiveness first); animations
      * switched off in system settings also snap. Returns true only when a transition really started. [inherited] carries a running transition over from a replaced view.
      */
-    internal fun setTextBlur(next: CharSequence, from: CharSequence? = null, minGapMs: Long = 0L, inherited: List<BlurTextLayer>? = null): Boolean {
+    internal fun setTextBlur(next: CharSequence, from: CharSequence? = null, minGapMs: Long = 0L, inherited: List<BlurTextLayer>? = null, syncDelay: Boolean = false, dir: BlurDir = BlurDir.UP): Boolean {
         val prev = text
         if (from == null && inherited == null && prev.contentEquals(next)) return false     // unchanged: nothing to animate
         val now = SystemClock.uptimeMillis()
@@ -135,7 +137,7 @@ open class BlurTextView(context: Context) : TextView(context) {
         inChange = true
         setText(next)
         inChange = false
-        t.change(next, from ?: prev, inherited)
+        t.change(next, from ?: prev, inherited, syncDelay, dir)
         return true
     }
 

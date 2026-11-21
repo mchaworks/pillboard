@@ -79,6 +79,16 @@ class PillboardService : InputMethodService() {
     private var builtSeed = 0
     private var builtFx = true
     private var pageKey: KeyView? = null
+    // emoji panel: grid mode (tabs + grid) or search mode (letter keys type into [query], results in the top bar)
+    private var emojiMode = false
+    private var emojiSearch = false
+    private var emojiCat = 0
+    private val query = StringBuilder()
+    private var emojiGrid: EmojiGridView? = null
+    private var emojiTabs: List<TextView> = emptyList()
+    private var searchLabel: TextView? = null
+    private var searchScroll: android.widget.HorizontalScrollView? = null
+    private var searchResults: LinearLayout? = null
     /** One glass drawable per built input view: its AGSL layer and light animation are reused across applyBlur() calls. */
     private var shell: GlassSurfaceDrawable? = null
     /** Stage 4: edge refraction of the shell layer (API 33+, "Liquid refraction" setting). */
@@ -117,6 +127,7 @@ class PillboardService : InputMethodService() {
         super.onStartInputView(info, restarting)
         if (Prefs.dynamic(this) != builtDynamic || Prefs.seedColor(this) != builtSeed || Prefs.bool(this, "glass_fx", true) != builtFx) setInputView(onCreateInputView())
         symbols = false
+        emojiMode = false; emojiSearch = false; query.setLength(0)
         autoCap()
         applyBlur()
         render()
@@ -125,6 +136,7 @@ class PillboardService : InputMethodService() {
 
     override fun onFinishInputView(finishingInput: Boolean) {
         preview?.dismiss(immediate = true)
+        emojiGrid?.dismissTones()
         super.onFinishInputView(finishingInput)
     }
 
@@ -184,21 +196,31 @@ class PillboardService : InputMethodService() {
     }
 
     // ---- layout ----
-    private fun render(animateRows: Boolean = false) {
+    private fun render(animateRows: Boolean = false, dir: BlurDir = BlurDir.UP) {
         val r = root ?: return
         // labels of the rows above the bottom row (text + any running Blur Replace), kept to animate only what changes
         val oldRows = if (animateRows) (0 until r.childCount).map { r.getChildAt(it) }
-            .filter { it !== strip && it !== r.getChildAt(r.childCount - 1) }
+            .filter { it !== strip && it !== r.getChildAt(r.childCount - 1) && it is ViewGroup }
             .map { row -> (row as ViewGroup).children.filterIsInstance<KeyView>().filter { it.text.length == 1 }
-                .map { OldKey(it.text.toString(), it.blurSnapshot(), it.visualW, it.visualH) }.toList() }
+                .map { OldKey(it.text.toString(), it.blurSnapshot(), it.visualW, it.visualH,
+                    row.left + it.left, row.top + it.top, it.width, it.height, it.textSize, it.typeface, it.currentTextColor) }.toList() }
         else null
         r.removeAllViews()
         letterKeys.clear(); shiftKey = null; pageKey = null
         val keyH = keyHeight()
 
-        strip = if (Prefs.bool(this, "suggest", true) && suggestionsAllowed()) buildStrip().also { r.addView(it) } else null
+        val grid = emojiMode && !emojiSearch
+        emojiGrid = null
+        strip = when {
+            emojiMode && emojiSearch -> buildSearchBar().also { r.addView(it) }
+            grid -> buildEmojiTabs().also { r.addView(it) }
+            Prefs.bool(this, "suggest", true) && suggestionsAllowed() -> buildStrip().also { r.addView(it) }
+            else -> null
+        }
 
-        if (!symbols) {
+        if (grid) {
+            r.addView(buildEmojiGrid(keyH))
+        } else if (!symbols) {
             if (Prefs.bool(this, "numrow", false)) r.addView(rowOf { chars("1234567890", (keyH * 0.8f).toInt()) })
             r.addView(rowOf { chars("qwertyuiop", keyH) })
             r.addView(rowOf { gap(0.5f); chars("asdfghjkl", keyH); gap(0.5f) })
@@ -216,7 +238,8 @@ class PillboardService : InputMethodService() {
                 key("Backspace", keyH, 1.5f, KeyStyle.SPECIAL, repeat = true, icon = R.drawable.ic_backspace) { backspace() }
             })
         }
-        r.addView(rowOf {
+        val emojiOn = Prefs.bool(this, "emoji", true)
+        if (grid) r.addView(emojiBottomRow(keyH)) else r.addView(rowOf {
             pageKey = key(if (symbols) "ABC" else "123", keyH, 1.35f, KeyStyle.SPECIAL) {
                 // snapshot first: render() rebuilds the row, and a transition still running on the old key carries over
                 val from = if (symbols) "ABC" else "123"
@@ -224,11 +247,13 @@ class PillboardService : InputMethodService() {
                 val oldW = pageKey?.visualW ?: 0
                 val oldH = pageKey?.visualH ?: 0
                 symbols = !symbols
-                render(animateRows = true)    // the new label is already in place; Blur Replace only changes what is painted
-                pageKey?.morphLabel(if (symbols) "ABC" else "123", from = from, inherited = running, oldW = oldW, oldH = oldH)
+                val dir = if (symbols) BlurDir.RIGHT else BlurDir.LEFT     // 123 slides forward, ABC slides back
+                render(animateRows = true, dir = dir)    // the new label is already in place; Blur Replace only changes what is painted
+                pageKey?.morphLabel(if (symbols) "ABC" else "123", from = from, inherited = running, oldW = oldW, oldH = oldH, dir = dir)
             }
+            if (emojiOn) key("Emoji", keyH, 1f, KeyStyle.SPECIAL, icon = R.drawable.ic_emoji) { setEmoji(true) }
             key(",", keyH, 0.85f, KeyStyle.SPECIAL) { type(",") }
-            key("space", keyH, 4.45f, KeyStyle.SPECIAL) { space() }.also { sp ->
+            key("space", keyH, if (emojiOn) 3.45f else 4.45f, KeyStyle.SPECIAL) { space() }.also { sp ->
                 if (Prefs.bool(this@PillboardService, "spaceslide", true)) {
                     sp.onSlide = { n -> moveCursor(n) }
                     sp.onSlideState = { on -> letterKeys.forEach { it.animate().alpha(if (on) 0.35f else 1f).setDuration(120).start() } }
@@ -251,7 +276,7 @@ class PillboardService : InputMethodService() {
         if (oldRows != null && animationsOn(this)) {
             // rows stay still; each key whose label differs from the old page blurs from the old to the new character.
             // Rows are matched from the bottom (a number row above QWERTY has no counterpart), keys by position.
-            val rows = (0 until r.childCount).map { r.getChildAt(it) }.filter { it !== strip && it !== r.getChildAt(r.childCount - 1) }
+            val rows = (0 until r.childCount).map { r.getChildAt(it) }.filter { it !== strip && it !== r.getChildAt(r.childCount - 1) && it is ViewGroup }
             for (ri in rows.indices) {
                 val old = oldRows.getOrNull(oldRows.size - rows.size + ri)
                 var ki = 0
@@ -264,10 +289,190 @@ class PillboardService : InputMethodService() {
                         if (kotlin.math.abs(o!!.w - k.width) > 1 || kotlin.math.abs(o.h - k.height) > 1) k.startShapeMorph(o.w, o.h)
                         continue
                     }
-                    k.morphLabel(k.text.toString(), from = o?.text ?: "", inherited = o?.snap, oldW = o?.w ?: 0, oldH = o?.h ?: 0)
+                    // no counterpart on the old page (e.g. n, m coming back from the symbols page): arrive on the same
+                    // delay as its neighbours instead of 60ms ahead of them
+                    k.morphLabel(k.text.toString(), from = o?.text ?: "", inherited = o?.snap, oldW = o?.w ?: 0, oldH = o?.h ?: 0,
+                        syncDelay = o == null, dir = dir)
                 }
+                // old keys the new row has no slot for (n, m going to the symbols page): their views are gone, so
+                // let the label blur out on its own instead of vanishing in one frame
+                old?.drop(ki)?.forEach { ghost(r, it, dir) }
             }
         }
+    }
+
+
+    // ---- emoji ----
+    private fun actionName(): String = when (currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: 0) {
+        EditorInfo.IME_ACTION_GO -> "Go"
+        EditorInfo.IME_ACTION_SEARCH -> "Search"
+        EditorInfo.IME_ACTION_SEND -> "Send"
+        EditorInfo.IME_ACTION_DONE -> "Done"
+        EditorInfo.IME_ACTION_NEXT -> "Next"
+        else -> "return"
+    }
+
+    /** Open/close the emoji panel. The panel settles in on the shared smooth ease (no spring). */
+    private fun setEmoji(on: Boolean) {
+        emojiGrid?.dismissTones()
+        emojiMode = on; emojiSearch = false; query.setLength(0)
+        if (on) emojiCat = if (EmojiData.recents(this).isEmpty()) 1 else 0
+        symbols = false
+        autoCap()
+        render()
+        val r = root ?: return
+        if (!animationsOn(this)) return
+        val fresh = if (on) listOfNotNull(emojiGrid) else (0 until r.childCount).map { r.getChildAt(it) }.filter { it !== strip && it !== r.getChildAt(r.childCount - 1) }
+        for (v in fresh) {
+            v.alpha = 0f; v.translationY = 8.dp.toFloat()
+            v.animate().alpha(1f).translationY(0f).setDuration(BlurTextTokens.TOTAL_MS).setInterpolator(BlurTextTokens.inEase).start()
+        }
+    }
+
+    private fun startEmojiSearch() {
+        emojiGrid?.dismissTones()
+        emojiSearch = true; query.setLength(0)
+        autoCap()
+        render()
+    }
+
+    private fun commitEmoji(e: String) {
+        lastFix = null
+        currentInputConnection?.commitText(e, 1)
+        EmojiData.addRecent(this, e)
+    }
+
+    private fun emojiBottomRow(keyH: Int) = rowOf {
+        pageKey = key("ABC", keyH, 1.35f, KeyStyle.SPECIAL) { setEmoji(false) }
+        key("Search emoji", keyH, 1f, KeyStyle.SPECIAL, icon = R.drawable.ic_search) { startEmojiSearch() }
+        key("space", keyH, 3.6f, KeyStyle.SPECIAL) { space() }
+        key("Backspace", keyH, 1.5f, KeyStyle.SPECIAL, repeat = true, icon = R.drawable.ic_backspace) { backspace() }
+        key(actionName(), keyH, 1.5f, KeyStyle.ACCENT) { enter() }
+    }
+
+    /** The grid takes exactly the height of the letter rows, so the keyboard never changes size when the panel opens. */
+    private fun buildEmojiGrid(keyH: Int): View {
+        val g = Prefs.int(this, "key_gap", 3)
+        val m = 2 * (g + 2).dp
+        val numRow = if (Prefs.bool(this, "numrow", false)) (keyH * 0.8f).toInt() + m else 0
+        return EmojiGridView(themed, tokens).also { gv ->
+            gv.layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 3 * (keyH + m) + numRow)
+            gv.onPick = { commitEmoji(it) }
+            emojiGrid = gv
+            showCategory(gv)
+        }
+    }
+
+    private fun showCategory(gv: EmojiGridView) {
+        if (emojiCat == 0) {
+            gv.emptyHint = "Recently used emoji show up here"
+            gv.items = EmojiData.recents(this)
+        } else gv.items = EmojiData.categories().getOrNull(emojiCat - 1)?.items ?: emptyList()
+    }
+
+    private fun buildEmojiTabs() = LinearLayout(themed).apply {
+        orientation = LinearLayout.HORIZONTAL
+        isBaselineAligned = false
+        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 42.dp).apply { setMargins(3.dp, 0, 3.dp, 3.dp) }
+        setPadding(3.dp, 3.dp, 3.dp, 3.dp)
+        val glyphs = listOf("\uD83D\uDD58") + EmojiData.categories().map { it.glyph }
+        val names = listOf("Recent") + EmojiData.categories().map { it.name }
+        emojiTabs = glyphs.mapIndexed { i, gl ->
+            TextView(themed).apply {
+                text = gl; textSize = 19f; gravity = Gravity.CENTER
+                contentDescription = names[i]
+                setOnClickListener {
+                    emojiCat = i
+                    emojiGrid?.dismissTones()
+                    emojiGrid?.let { g -> showCategory(g) }
+                    styleEmojiTabs()
+                }
+            }.also { addView(it, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f)) }
+        }
+        styleEmojiTabs()
+    }
+
+    private fun styleEmojiTabs() {
+        emojiTabs.forEachIndexed { i, tv ->
+            val on = i == emojiCat
+            tv.alpha = if (on) 1f else 0.6f
+            tv.background = if (on) GradientDrawable().apply { setColor(tokens.stripPressed); cornerRadius = tokens.stripRadius - 4.dp } else null
+        }
+    }
+
+    /** Search mode top bar: close, the query, then a scrolling row of matches (recents while the query is empty). */
+    private fun buildSearchBar() = LinearLayout(themed).apply {
+        orientation = LinearLayout.HORIZONTAL
+        isBaselineAligned = false
+        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 42.dp).apply { setMargins(3.dp, 0, 3.dp, 3.dp) }
+        background = tokens.stripBackground()
+        setPadding(3.dp, 3.dp, 3.dp, 3.dp)
+        val medium = ResourcesCompat.getFont(themed, R.font.gsr_medium)
+        addView(TextView(themed).apply {
+            text = "\u2715"; textSize = 16f; gravity = Gravity.CENTER
+            setTextColor(tokens.keyText); alpha = 0.7f
+            contentDescription = "Close search"
+            background = tokens.stripItemBackground()
+            setOnClickListener { setEmoji(true) }
+        }, LinearLayout.LayoutParams(40.dp, MATCH_PARENT))
+        val labelView = TextView(themed).apply {
+            textSize = 15f; maxLines = 1; gravity = Gravity.CENTER_VERTICAL
+            ellipsize = android.text.TextUtils.TruncateAt.START
+            setPadding(4.dp, 0, 8.dp, 0)
+            setTextColor(tokens.keyText)
+            if (medium != null) typeface = medium
+        }
+        searchLabel = labelView
+        addView(labelView, LinearLayout.LayoutParams(112.dp, MATCH_PARENT))
+        addView(View(themed).apply { setBackgroundColor(tokens.divider) },
+            LinearLayout.LayoutParams(1.dp, 14.dp).apply { gravity = Gravity.CENTER_VERTICAL })
+        val resultsView = LinearLayout(themed).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val scrollView = android.widget.HorizontalScrollView(themed).apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(resultsView, ViewGroup.LayoutParams(WRAP_CONTENT, MATCH_PARENT))
+        }
+        searchResults = resultsView
+        searchScroll = scrollView
+        addView(scrollView, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
+    }
+
+    private fun updateSearchBar() {
+        val label = searchLabel ?: return
+        val box = searchResults ?: return
+        if (query.isEmpty()) { label.text = "Search emoji"; label.alpha = 0.5f } else { label.text = query.toString(); label.alpha = 1f }
+        box.removeAllViews()
+        val list = if (query.isBlank()) EmojiData.recents(this) else EmojiData.search(query.toString())
+        if (list.isEmpty() && query.isNotBlank()) {
+            box.addView(TextView(themed).apply {
+                text = "No emoji found"; textSize = 14f; setTextColor(tokens.keyText); alpha = 0.5f
+                setPadding(10.dp, 0, 0, 0); gravity = Gravity.CENTER_VERTICAL
+            }, LinearLayout.LayoutParams(WRAP_CONTENT, MATCH_PARENT))
+        }
+        for (e in list) box.addView(TextView(themed).apply {
+            text = e; textSize = 24f; gravity = Gravity.CENTER
+            background = tokens.stripItemBackground()
+            setOnClickListener { commitEmoji(e) }
+        }, LinearLayout.LayoutParams(42.dp, MATCH_PARENT))
+        searchScroll?.scrollTo(0, 0)
+    }
+
+    /** Departing label of a key that no longer exists: a throw-away [BlurTextView] in the shell's overlay at the old spot. */
+    private fun ghost(host: LinearLayout, o: OldKey, dir: BlurDir) {
+        if (o.kw <= 0 || o.kh <= 0 || o.text.isBlank()) return
+        val g = BlurTextView(themed).apply {
+            gravity = Gravity.CENTER
+            includeFontPadding = true
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, o.textSize)
+            o.typeface?.let { typeface = it }
+            setTextColor(o.color)
+            measure(View.MeasureSpec.makeMeasureSpec(o.kw, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(o.kh, View.MeasureSpec.EXACTLY))
+            layout(o.x, o.y, o.x + o.kw, o.y + o.kh)
+        }
+        host.overlay.add(g)
+        // text is empty, so setTextBlur departs from [o.text] to nothing
+        if (!g.setTextBlur("", from = o.text, dir = dir)) { host.overlay.remove(g); return }
+        host.postDelayed({ host.overlay.remove(g) }, BlurTextTokens.TOTAL_MS + 80L)
     }
 
     /**
@@ -343,12 +548,12 @@ class PillboardService : InputMethodService() {
         letterKeys.forEach {
             val l = it.text.toString()
             // only keys whose label really changes animate (ON <-> LOCK keeps the same capitals); fast typing snaps
-            it.morphLabel(if (shift != Shift.OFF) l.uppercase() else l.lowercase(), minGapMs = BlurTextTokens.RAPID_GAP_MS)
+            it.morphLabel(if (shift != Shift.OFF) l.uppercase() else l.lowercase(), minGapMs = BlurTextTokens.RAPID_GAP_MS,
+                dir = if (shift != Shift.OFF) BlurDir.UP else BlurDir.DOWN)     // capitals rise, lowercase settles down
         }
         shiftKey?.let {
             it.setIcon(shiftIcon(), shiftDesc())
-            it.setKeyStyle(shiftStyle())
-            it.startShapeMorph()       // the Shift key itself changes state: its body flexes with the corner/tone spring
+            it.setKeyStyle(shiftStyle())      // tone and corners flow on the smooth timeline (no spring)
         }
     }
 
@@ -391,6 +596,7 @@ class PillboardService : InputMethodService() {
     }
 
     private fun updateStrip() {
+        if (emojiMode) { if (emojiSearch) updateSearchBar(); return }
         val s = strip ?: return
         val word = currentWord()
         val list = Suggestions.forPrefix(word)
@@ -418,6 +624,7 @@ class PillboardService : InputMethodService() {
     // ---- actions ----
     /** Space-bar slide: move the cursor [n] characters (negative = left). */
     private fun moveCursor(n: Int) {
+        if (emojiSearch) return
         lastFix = null
         val code = if (n < 0) KeyEvent.KEYCODE_DPAD_LEFT else KeyEvent.KEYCODE_DPAD_RIGHT
         repeat(Math.abs(n)) { sendDownUpKeyEvents(code) }
@@ -425,12 +632,14 @@ class PillboardService : InputMethodService() {
     }
 
     private fun type(s: String) {
+        if (emojiSearch) { query.append(s.lowercase()); updateSearchBar(); return }
         lastFix = null
         currentInputConnection?.commitText(s, 1)
         afterEdit()
     }
 
     private fun backspace() {
+        if (emojiSearch) { if (query.isNotEmpty()) query.setLength(query.length - 1); updateSearchBar(); return }
         val fix = lastFix; lastFix = null
         val ic = currentInputConnection
         if (fix != null && ic != null && ic.getTextBeforeCursor(fix.second.length, 0)?.toString() == fix.second) {
@@ -444,6 +653,7 @@ class PillboardService : InputMethodService() {
 
     /** iOS-style: double space becomes ". " */
     private fun space() {
+        if (emojiSearch) { if (query.isNotEmpty() && query.last() != ' ') query.append(' '); updateSearchBar(); return }
         val ic = currentInputConnection ?: return
         if (Prefs.bool(this, "autocorrect", true) && suggestionsAllowed() && autoCorrect(ic)) { afterEdit(); return }
         lastFix = null
@@ -470,6 +680,7 @@ class PillboardService : InputMethodService() {
     }
 
     private fun enter() {
+        if (emojiSearch) { setEmoji(true); return }
         lastFix = null
         if (!sendDefaultEditorAction(true)) sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
         afterEdit()
@@ -488,6 +699,7 @@ class PillboardService : InputMethodService() {
     }
 
     private fun autoCap() {
+        if (emojiSearch) { if (shift != Shift.LOCK) shift = Shift.OFF; return }
         if (shift == Shift.LOCK) return
         if (!Prefs.bool(this, "autocap", true)) { shift = Shift.OFF; return }
         val ei = currentInputEditorInfo
@@ -505,4 +717,7 @@ class PillboardService : InputMethodService() {
 }
 
 /** What the rebuild needs from a key of the previous page: its character, a running Blur Replace and its visual size. */
-private class OldKey(val text: String, val snap: List<BlurTextLayer>?, val w: Int, val h: Int)
+private class OldKey(
+    val text: String, val snap: List<BlurTextLayer>?, val w: Int, val h: Int,
+    val x: Int, val y: Int, val kw: Int, val kh: Int, val textSize: Float, val typeface: android.graphics.Typeface?, val color: Int,
+)
