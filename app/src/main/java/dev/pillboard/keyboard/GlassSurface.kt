@@ -247,6 +247,9 @@ class GlassSurfaceDrawable(
 
     fun setFill(color: Int) { if (fill != color) { fill = color; dirty = true; invalidateSelf() } }
 
+    /** Corner radius of the shell itself (px). */
+    val shellRadius: Float get() = radius
+
     /** True when the AGSL layer is actually in use (for status/diagnostics). */
     val shaderActive get() = shader != null || blob != null
 

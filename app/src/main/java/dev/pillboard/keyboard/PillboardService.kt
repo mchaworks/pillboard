@@ -237,13 +237,43 @@ class PillboardService : InputMethodService() {
      * text stays readable), blur off (solid tonal shell). The window background is a rounded rect so the blur is
      * masked to the shell's corners instead of showing a square blurred slab.
      */
+    private var blurOn = false
+    /** 0 = normal window blur, 1 = blur off + opaque fill: eased while the strip capsule's headroom exists. */
+    private var capBlurK = 0f
+    private var capBlurAnim: android.animation.ValueAnimator? = null
+
+    private fun applyCapsuleBlur() {
+        if (!blurOn) return
+        val k = capBlurK
+        window.window?.let { w ->
+            if (Build.VERSION.SDK_INT >= 31) w.setBackgroundBlurRadius((tokens.blurRadius * (1f - k)).toInt())
+        }
+        shell?.setFill(androidx.core.graphics.ColorUtils.blendARGB(tokens.glassFillBlur, tokens.glassFillNoBlur, k))
+    }
+
+    /**
+     * The window blur always covers the whole window rect. While the capsule's transparent headroom exists that rect
+     * is much bigger than the glass (a blurred slab beside/above the capsule), so the blur fades out (and the glass
+     * fill firms up to compensate) when the headroom appears and fades back when it is gone.
+     */
+    private fun fadeCapsuleBlur(to: Float) {
+        capBlurAnim?.cancel()
+        if (!blurOn || !animationsOn(this)) { capBlurK = to; applyCapsuleBlur(); return }
+        capBlurAnim = android.animation.ValueAnimator.ofFloat(capBlurK, to).apply {
+            duration = 140L
+            addUpdateListener { capBlurK = it.animatedValue as Float; applyCapsuleBlur() }
+            start()
+        }
+    }
+
     private fun applyBlur() {
         // "High contrast text" (accessibility) = Reduce Transparency: solid shell, no blur
         val highContrast = android.provider.Settings.Secure.getInt(contentResolver, "high_text_contrast_enabled", 0) == 1
         val blurRequested = Prefs.bool(this, "blur", false) && !highContrast
         val blur = blurRequested && blurSupported()
+        blurOn = blur
         val fill = when {
-            blur -> tokens.glassFillBlur
+            blur -> androidx.core.graphics.ColorUtils.blendARGB(tokens.glassFillBlur, tokens.glassFillNoBlur, capBlurK)
             blurRequested -> tokens.glassFillNoBlur
             else -> tokens.background
         }
@@ -266,7 +296,7 @@ class PillboardService : InputMethodService() {
             }
             // Android's window-blur docs: the blur is drawn under the window surface, so the window must be translucent
             if (blur) w.setFormat(PixelFormat.TRANSLUCENT)
-            if (Build.VERSION.SDK_INT >= 31) w.setBackgroundBlurRadius(if (blur) tokens.blurRadius else 0)
+            if (Build.VERSION.SDK_INT >= 31) w.setBackgroundBlurRadius(if (blur) (tokens.blurRadius * (1f - capBlurK)).toInt() else 0)
         }
     }
 
@@ -899,6 +929,7 @@ class PillboardService : InputMethodService() {
         val h = host ?: return
         if (h.capTop == px) return
         h.capTop = px
+        fadeCapsuleBlur(if (px > 0) 1f else 0f)
         (root?.layoutParams as? FrameLayout.LayoutParams)?.topMargin = px
         shell?.topPad = px
         h.requestLayout()

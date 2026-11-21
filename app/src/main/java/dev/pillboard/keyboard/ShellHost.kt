@@ -95,15 +95,18 @@ internal class ShapeMaskDrawable(private val glass: GlassSurfaceDrawable, privat
     }
 
     /**
-     * The window blur is clipped by the decor view's outline, which comes from the background drawable's outline, not
-     * from what [draw] paints. Without this the outline is empty and the blur is a full rectangle behind rounded glass.
+     * The window blur takes its corner radius from the decor view's outline, which comes from this background's
+     * outline. The radius is only defined for a round-rect outline: a Path outline has an undefined radius, so the
+     * blur came out as a square slab behind the rounded glass. So this is always the SHELL's round rect (the capsule's
+     * headroom is handled by fading the blur out while the capsule is up, see PillboardService.fadeCapsuleBlur: one
+     * window blur region cannot follow a shell+capsule union).
      */
     override fun getOutline(outline: Outline) {
         host.getLocationInWindow(loc)
-        glass.maskPath(path)
-        val p = Path(path)
-        p.offset(loc[0].toFloat(), loc[1].toFloat())
-        if (Build.VERSION.SDK_INT >= 30) outline.setPath(p) else outline.setEmpty()
+        if (host.width <= 0 || host.height <= 0) { outline.setEmpty(); return }
+        outline.setRoundRect(
+            loc[0], loc[1] + glass.topPad, loc[0] + host.width, loc[1] + host.height, glass.shellRadius,
+        )
         outline.alpha = 1f
     }
 
