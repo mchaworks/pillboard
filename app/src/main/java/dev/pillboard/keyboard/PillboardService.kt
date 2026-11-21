@@ -143,7 +143,7 @@ class PillboardService : InputMethodService() {
         }
         root = r
         val h = ShellHost(themed).apply {
-            capTop = StripCapsule.headroom(StripFeature.values().size)
+            capTop = 0          // headroom only exists while the capsule is open (see setHeadroom): otherwise the window blur would cover it
             onOutsideTap = { dismissMenu(true) }
             addView(r, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM).apply { topMargin = capTop })
         }
@@ -865,6 +865,7 @@ class PillboardService : InputMethodService() {
         shell?.clearBulge()
         stripIcon?.alpha = 1f
         host?.let { it.menuOpen = false; it.requestLayout() }
+        setHeadroom(0)
     }
 
     /**
@@ -892,8 +893,31 @@ class PillboardService : InputMethodService() {
      * no second outline. Bottom = the active feature, which stays exactly where the button's icon is; above it the other
      * features, on top a "+". The other icons arrive with Blur Replace and leave the same way.
      */
+    private fun setHeadroom(px: Int) {
+        val h = host ?: return
+        if (h.capTop == px) return
+        h.capTop = px
+        (root?.layoutParams as? FrameLayout.LayoutParams)?.topMargin = px
+        shell?.topPad = px
+        h.requestLayout()
+    }
+
+    /** Grow the window upward first, build the capsule once that layout has happened. */
     private fun showStripMenu(anchor: View) {
         dismissMenu()
+        val h = host ?: return
+        val need = StripCapsule.headroom(StripFeature.available(this).size)
+        if (h.capTop == need) { showStripMenuNow(anchor); return }
+        setHeadroom(need)
+        h.viewTreeObserver.addOnGlobalLayoutListener(object : android.view.ViewTreeObserver.OnGlobalLayoutListener {
+            override fun onGlobalLayout() {
+                h.viewTreeObserver.removeOnGlobalLayoutListener(this)
+                if (anchor.isAttachedToWindow) showStripMenuNow(anchor) else setHeadroom(0)
+            }
+        })
+    }
+
+    private fun showStripMenuNow(anchor: View) {
         val h0 = host ?: return
         val g = shell ?: return
         val feats = StripFeature.available(this)
