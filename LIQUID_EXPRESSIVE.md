@@ -177,3 +177,11 @@ What transferred to Pillboard: SDF rim, Fresnel-style two-lobe lighting, edge-ga
 ## Glass rim (zip 12)
 
 `GlassShader` (API 33+) draws a 7dp perimeter band from the shell SDF: Fresnel falloff, cyan→blue→violet→magenta→warm dispersion ramp (hue follows bevel depth and edge direction), corner-weighted intensity, thin specular ridge (key light upper-left + weaker fill), faint inner reflection. Night = additive glow, light = normal blend + faint shade for thickness. Static, no animation. Pre-33: faint sweep-gradient ring (approximation). Setting: "Glass rim" (`glass_rim`, default on). Keycaps and prediction strip untouched. The QWEA0 module was not imported (it ships native code); only the lighting/dispersion ideas were adapted.
+
+## Liquid morph 123 <-> ABC (zip 15)
+
+One deforming key silhouette (`MorphSilhouette` in `MorphGeometry.kt`): half-width profile W(y) joined with midpoint quadratic Béziers; the top stretches up, pinches into a neck under a rounded head, the neck travels up while it retracts, then it settles into the key. `LiquidMorphRenderer` draws it as a ViewOverlay path (no bitmap, any API); label crossfades at max stretch; both directions. `MorphTransitionController` runs one morph at a time (cancel-safe). Tunables: `MorphTokens`. Animations off = no morph.
+
+## Liquid Motion System (zip 16)
+
+Reusable pieces (all in the main package): `MorphTokens` (every tunable), `MorphPresets` (duration + curve per morph kind: shape / container / release), `MorphState` (`RoundRectState`), `MorphGeometry` (`MorphSilhouette`: single-shape Bézier deformation), `LiquidMorphRenderer` + `MorphTransitionController` (overlay playback, one at a time, cancel-safe), `ContainerMorph` (`morphContainer`: outline/clip/shadow of a view interpolates rect + radius). Applied: 123 <-> ABC = shape morph; long-press popup = container morph (grows out of the key, content fades in late). Not built yet: metaball merge capability (the earlier SDF version was replaced by the single-shape one), interactive/drag deformation, optical glass reacting to the silhouette.

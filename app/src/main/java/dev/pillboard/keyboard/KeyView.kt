@@ -173,6 +173,8 @@ class KeyView(
     private var pressedInk = 0
     private var icon: Drawable? = null
     private var restColors = IntArray(2)
+    internal val restRadiusPx: Float get() = rest
+    internal val restFillColor: Int get() = restColors[0]
     private val downColors = IntArray(2)
     private var morph: ValueAnimator? = null
     private val argb = ArgbEvaluator()
@@ -185,6 +187,7 @@ class KeyView(
 
     private var pendingUp = false
     private var alts = emptyList<String>()
+    private var altMorph: ValueAnimator? = null
     private var altViews = emptyList<TextView>()
     private var altIdx = 0
     private var popup: PopupWindow? = null
@@ -403,7 +406,19 @@ class KeyView(
             isTouchable = false
             showAtLocation(this@KeyView, Gravity.NO_GRAVITY, wx - ox, wy - oy)
         }
-        popIn(box, bw, bh, t.popupInMs, motionOn)
+        altMorph?.cancel()
+        if (motionOn) {
+            // container morph: the popup grows out of the key (same rounded-rect outline, radius and position interpolate)
+            val fw = minOf(width.toFloat(), bw.toFloat()); val fh = bh * MorphTokens.CONTAINER_START_H
+            val from = RoundRectState((bw - fw) / 2f, bh - fh, (bw + fw) / 2f, bh.toFloat(), rest)
+            val to = RoundRectState(0f, 0f, bw.toFloat(), bh.toFloat(), t.popupRadius)
+            altMorph = morphContainer(box, from, to, MorphPresets.container(t),
+                onProgress = { f ->
+                    val a = ((f - MorphTokens.CONTAINER_FADE_FROM) / MorphTokens.CONTAINER_FADE_SPAN).coerceIn(0f, 1f)
+                    items.forEach { it.alpha = a }
+                },
+                onEnd = { items.forEach { it.alpha = 1f } })
+        } else popIn(box, bw, bh, t.popupInMs, false)
         highlight()
         performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
     }
@@ -420,6 +435,7 @@ class KeyView(
     }
 
     private fun dismissAlts() {
+        altMorph?.cancel(); altMorph = null
         popup?.dismiss(); popup = null
         altViews = emptyList()
     }

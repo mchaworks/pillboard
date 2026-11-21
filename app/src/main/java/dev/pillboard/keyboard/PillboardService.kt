@@ -78,6 +78,7 @@ class PillboardService : InputMethodService() {
     private var builtFx = true
     private var builtRim = true
     private var pageKey: KeyView? = null
+    private var morph: MorphTransitionController? = null
     /** One glass drawable per built input view: its AGSL layer and light animation are reused across applyBlur() calls. */
     private var shell: GlassSurfaceDrawable? = null
     /** Stage 4: edge refraction of the shell layer (API 33+, "Liquid refraction" setting). */
@@ -100,6 +101,8 @@ class PillboardService : InputMethodService() {
         }
         root = r
         refraction = ShellRefraction(r, tokens.containerRadius)
+        morph?.cancel()
+        morph = MorphTransitionController(r)
         // Keep keys clear of the system navigation bar (fixes overlap on edge-to-edge Android 15+)
         ViewCompat.setOnApplyWindowInsetsListener(r) { _, insets ->
             navInset = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
@@ -125,6 +128,7 @@ class PillboardService : InputMethodService() {
 
     override fun onFinishInputView(finishingInput: Boolean) {
         preview?.dismiss(immediate = true)
+        morph?.cancel()
         super.onFinishInputView(finishingInput)
     }
 
@@ -186,6 +190,7 @@ class PillboardService : InputMethodService() {
     // ---- layout ----
     private fun render(animateRows: Boolean = false) {
         val r = root ?: return
+        if (!animateRows) morph?.cancel()
         r.removeAllViews()
         letterKeys.clear(); shiftKey = null; pageKey = null
         val keyH = keyHeight()
@@ -211,7 +216,13 @@ class PillboardService : InputMethodService() {
             })
         }
         r.addView(rowOf {
-            pageKey = key(if (symbols) "ABC" else "123", keyH, 1.35f, KeyStyle.SPECIAL) { symbols = !symbols; render(animateRows = true) }
+            pageKey = key(if (symbols) "ABC" else "123", keyH, 1.35f, KeyStyle.SPECIAL) {
+                val spec = pageKey?.let { morphSpec(it, if (symbols) "ABC" else "123", if (symbols) "123" else "ABC") }
+                symbols = !symbols
+                render(animateRows = true)
+                val nk = pageKey
+                if (spec != null && nk != null && animationsOn(this@PillboardService)) morph?.start(spec, nk)
+            }
             key(",", keyH, 0.85f, KeyStyle.SPECIAL) { type(",") }
             key("space", keyH, 4.45f, KeyStyle.SPECIAL) { space() }.also { sp ->
                 if (Prefs.bool(this@PillboardService, "spaceslide", true)) {
@@ -243,12 +254,6 @@ class PillboardService : InputMethodService() {
                     .setInterpolator(DecelerateInterpolator()).start()
                 n++
             }
-            // organic 123 <-> ABC: the key itself springs in from a slightly smaller, fainter state
-            pageKey?.let { k ->
-                k.alpha = 0.35f; k.scaleX = 0.84f; k.scaleY = 0.84f
-                k.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(tokens.releaseMs)
-                    .setInterpolator(tokens.spring).start()
-            }
         }
     }
 
@@ -272,6 +277,19 @@ class PillboardService : InputMethodService() {
         isBaselineAligned = false
         layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
         build()
+    }
+
+    /** Visible rect of the 123/ABC key in root coordinates (the view is a full cell; the face is inset by the hit insets). */
+    private fun morphSpec(k: KeyView, from: String, to: String): LiquidMorphDrawable.Spec? {
+        val row = k.parent as? View ?: return null
+        if (k.width <= 0 || k.height <= 0) return null
+        val g = Prefs.int(this, "key_gap", 3)
+        val l = (row.left + k.left + g.dp).toFloat()
+        val t = (row.top + k.top + (g + 2).dp).toFloat()
+        val r = (row.left + k.right - g.dp).toFloat()
+        val b = (row.top + k.bottom - (g + 2).dp).toFloat()
+        return LiquidMorphDrawable.Spec(l, t, r, b, k.restRadiusPx, k.restFillColor, k.currentTextColor,
+            k.paint.textSize, k.typeface, from, to)
     }
 
     private fun LinearLayout.key(

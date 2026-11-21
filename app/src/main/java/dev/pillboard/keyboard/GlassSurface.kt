@@ -86,6 +86,15 @@ internal object GlassShader {
 
                 // key light upper-left, weaker fill from the opposite side
                 float2 L = float2(-0.552, -0.834);
+                if (touchAmt > 0.001) {
+                    // the light leans toward the pressed key: the highlight and dispersion travel around the rim
+                    float2 toT = touch - c;
+                    float2 dT = toT / max(length(toT), 1.0);
+                    float2 lm = mix(L, dT, 0.85 * touchAmt);
+                    L = lm / max(length(lm), 0.001);
+                }
+                float2 dp = (fragCoord - touch) / (130.0 * dpx);
+                float boost = 1.0 + touchAmt * exp(-dot(dp, dp));   // rim near the finger glows brighter
                 float lobe1 = pow(max(dot(n, L), 0.0), 2.0);
                 float lobe2 = pow(max(dot(n, -L), 0.0), 3.0) * 0.45;
                 float lobe = clamp(lobe1 + lobe2, 0.0, 1.0);
@@ -97,13 +106,13 @@ internal object GlassShader {
                 float phase = 0.5 + 0.5 * dot(n, float2(0.8, -0.6));
                 float3 hue = spectrum(u * 0.7 + 0.3 * phase);
                 float chroma = fres * (0.30 + 0.70 * corner) * (0.35 + 0.65 * lobe) * rimAmt
-                    * mix(0.26, 0.46, night);
+                    * mix(0.26, 0.46, night) * boost;
 
                 // thin specular ridge just inside the edge (slightly warm), plus a faint inner reflection
                 float rd = (depth - 1.6 * dpx) / (0.9 * dpx);
                 float ridge = exp(-rd * rd);
                 float spec = ridge * (lobe1 + 0.6 * lobe2) * (0.55 + 0.45 * corner) * rimAmt
-                    * mix(0.50, 0.55, night);
+                    * mix(0.50, 0.55, night) * boost;
                 float id = (depth - band) / (0.8 * dpx);
                 float inner = exp(-id * id) * lobe2 * 0.22 * rimAmt;
 
@@ -210,7 +219,7 @@ class GlassSurfaceDrawable(
      * back to rest. No-op unless the AGSL layer is active, so the fallback path never animates or invalidates.
      */
     fun leanLight(px: Float?, py: Float?, animate: Boolean) {
-        if (shader == null || !useShader) return
+        if (shader == null || !(useShader || rim)) return
         val down = px != null && py != null && w > 0
         val frac = if (down) (px!! / w).coerceIn(0f, 1f) else 0.5f
         val targetX = DEFAULT_LIGHT_X + (frac - 0.5f) * 2f * LIGHT_SWAY
