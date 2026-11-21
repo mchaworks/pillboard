@@ -255,16 +255,25 @@ class PillboardService : InputMethodService() {
     }
 
     /**
-     * The window blur always covers the whole window rect. While the capsule's transparent headroom exists that rect
-     * is much bigger than the glass (a blurred slab beside/above the capsule), so the blur fades out (and the glass
-     * fill firms up to compensate) when the headroom appears and fades back when it is gone.
+     * The window blur always covers the whole window rect, with ONE corner radius (AOSP DecorView takes it from the
+     * background's round-rect outline): there is no public API for a blur of any other shape in the same window. While
+     * the capsule's transparent headroom exists that rect is much bigger than the glass (a blurred slab beside/above
+     * the capsule), so the blur must be gone BEFORE the window grows and may only come back AFTER it has shrunk again.
+     * The glass fill firms up meanwhile to compensate. [onDone] runs when the fade has finished (not when cancelled).
      */
-    private fun fadeCapsuleBlur(to: Float) {
+    private fun fadeCapsuleBlur(to: Float, onDone: (() -> Unit)? = null) {
         capBlurAnim?.cancel()
-        if (!blurOn || !animationsOn(this)) { capBlurK = to; applyCapsuleBlur(); return }
+        if (!blurOn || !animationsOn(this) || capBlurK == to) {
+            capBlurK = to; applyCapsuleBlur(); onDone?.invoke(); return
+        }
         capBlurAnim = android.animation.ValueAnimator.ofFloat(capBlurK, to).apply {
-            duration = if (to > capBlurK) 100L else 160L      // out fast (the slab must not show), back a bit slower
+            duration = if (to > capBlurK) 110L else 160L
             addUpdateListener { capBlurK = it.animatedValue as Float; applyCapsuleBlur() }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                private var cancelled = false
+                override fun onAnimationCancel(a: android.animation.Animator) { cancelled = true }
+                override fun onAnimationEnd(a: android.animation.Animator) { if (!cancelled) onDone?.invoke() }
+            })
             start()
         }
     }
@@ -1022,26 +1031,29 @@ class PillboardService : InputMethodService() {
         val h = host ?: return
         if (h.capTop == px) return
         h.capTop = px
-        fadeCapsuleBlur(if (px > 0) 1f else 0f)
+        if (px == 0) fadeCapsuleBlur(0f)        // opening fades BEFORE the window grows (showStripMenu)
         (root?.layoutParams as? FrameLayout.LayoutParams)?.topMargin = px
         shell?.topPad = px
         h.requestLayout()
         window.window?.decorView?.let { d -> d.post { d.invalidateOutline() } }     // the window outline depends on the headroom
     }
 
-    /** Grow the window upward first, build the capsule once that layout has happened. */
+    /** Dissolve the window blur first, then grow the window upward, build the capsule once that layout has happened. */
     private fun showStripMenu(anchor: View) {
         dismissMenu()
         val h = host ?: return
         val need = StripCapsule.headroom(StripFeature.available(this).size)
         if (h.capTop == need) { showStripMenuNow(anchor); return }
-        setHeadroom(need)
-        h.viewTreeObserver.addOnGlobalLayoutListener(object : android.view.ViewTreeObserver.OnGlobalLayoutListener {
-            override fun onGlobalLayout() {
-                h.viewTreeObserver.removeOnGlobalLayoutListener(this)
-                if (anchor.isAttachedToWindow) showStripMenuNow(anchor) else setHeadroom(0)
-            }
-        })
+        fadeCapsuleBlur(1f) {
+            if (!anchor.isAttachedToWindow || host !== h) { fadeCapsuleBlur(0f); return@fadeCapsuleBlur }
+            setHeadroom(need)
+            h.viewTreeObserver.addOnGlobalLayoutListener(object : android.view.ViewTreeObserver.OnGlobalLayoutListener {
+                override fun onGlobalLayout() {
+                    h.viewTreeObserver.removeOnGlobalLayoutListener(this)
+                    if (anchor.isAttachedToWindow) showStripMenuNow(anchor) else setHeadroom(0)
+                }
+            })
+        }
     }
 
     private fun showStripMenuNow(anchor: View) {
