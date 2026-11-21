@@ -1293,10 +1293,10 @@ class PillboardService : InputMethodService() {
         if (translateMode) return
         val s = strip ?: return
         val c = suggestionCtx()
-        val res = if (Prefs.bool(this, "suggest", true)) Suggestions.suggest(c) else null
+        // empty field: the centre slot carries the name with no dividers, whatever the engine would offer (start-of-sentence words)
+        val brand = fieldIsEmpty()
+        val res = if (!brand && Prefs.bool(this, "suggest", true)) Suggestions.suggest(c) else null
         val any = (0 until 3).any { res?.slot(it) != null }
-        // empty field and nothing to suggest: the centre slot carries the name, with no dividers around it
-        val brand = !any && fieldIsEmpty()
         for (i in 0 until 3) {
             val tv = s.getChildAt(i * 2) as BlurTextView
             val cand = res?.slot(i)          // slot 1 (centre) is the lead candidate
