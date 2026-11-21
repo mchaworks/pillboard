@@ -209,3 +209,19 @@ Used by: Shift (letters whose case changes + the Shift key body), 123/ABC page k
 Bug fixed (zip 20): Blur Replace text sat a few px above the real text and dropped when the transition ended. The renderer centred with ascent/descent while TextView uses font top/bottom; it now uses `TextView.getBaseline()`, so the last frame equals the native text.
 
 Update (zip 22): the edge bulge (top/bottom swelling) looked bad and is OFF (`KEY_BULGE_*` = 0). The morph is now size change + a soft squash (`KEY_SQUASH`, wider/shorter by 4% at the peak) with straight edges and rounded corners; the Bezier edge code stays for experiments.
+
+## Strip capsule — one surface with the shell
+
+The capsule that grows out of the top-right strip button (hold) is no longer a popup window. The input view is a
+`ShellHost`: the keyboard shell at the bottom plus transparent headroom above it, and the glass of the whole host is one
+`GlassSurfaceDrawable`. Shell and capsule are two rounded-rect signed-distance fields joined with a polynomial smooth
+minimum (`BlobShader`, AGSL, API 33+), so there is one contour: a liquid neck forms where the capsule leaves the shell,
+and the hairline follows the merged outline (no second outline, no seam). The neck width follows how far the capsule has
+come out (0 while it is inside the shell, so a closed shell is exactly the plain rounded rect).
+
+- Below API 33 (or if the shader fails): path union of the two shapes, same single outline, no neck fillets.
+- Apps lay out above the shell's top edge (`onComputeInsets`); the headroom only takes touches while the capsule is open.
+- The window-blur mask follows shell ∪ capsule (`ShapeMaskDrawable`).
+- Known: the "Liquid refraction" setting now refracts the keys layer only (the glass fill moved to the host).
+- The capsule is flush with the shell's right edge (the shader clips the union to that edge, so a shared edge does not swell).
+- Not verified on a device (no Android toolchain was available where this was written).

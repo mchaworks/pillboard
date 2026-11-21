@@ -93,6 +93,18 @@ class PillboardService : InputMethodService() {
     private var trChip: TextView? = null
     private var trResult: TextView? = null
     private var trPopup: PopupWindow? = null
+    private var host: ShellHost? = null          // input view: shell + transparent headroom; its background is the shell's glass
+    private var menuLayer: FrameLayout? = null   // icons of the capsule above the top-right strip button (hold); the glass is the shell's own
+    private var menuIcons: List<BlurIconView> = emptyList()
+    private var menuClosing = false
+    private var menuMorph: android.animation.ValueAnimator? = null
+    private var menuFrom: RoundRectState? = null
+    private var menuTo: RoundRectState? = null
+    private val menuCur = RoundRectState()
+    private var menuOx = 0f
+    private var menuOy = 0f
+    private val menuAutoClose = Runnable { dismissMenu(true) }
+    private var stripIcon: BlurIconView? = null  // the strip button's icon (active feature)
     private val trHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val trDebounce = Runnable { requestTranslate() }
     private val trExec = java.util.concurrent.Executors.newSingleThreadExecutor()
@@ -105,6 +117,7 @@ class PillboardService : InputMethodService() {
         super.onCreate()
         // dictionaries load off the main thread; the strip fills in as soon as they are ready
         Suggestions.init(applicationContext) { trHandler.post { updateStrip() } }
+        runCatching { getSystemService(android.content.ClipboardManager::class.java).addPrimaryClipChangedListener(clipListener) }
     }
 
     override fun onCreateInputView(): View {
@@ -117,11 +130,24 @@ class PillboardService : InputMethodService() {
         themed = ContextThemeWrapper(this, if (builtDynamic) R.style.Theme_Pillboard else R.style.Theme_Pillboard_Static)
         tokens = KbTokens(themed)
         preview = KeyPreview(themed, tokens)
+        val radius = tokens.containerRadius
         val r = LinearLayout(themed).apply {
             orientation = LinearLayout.VERTICAL
+            // the glass is drawn by the host (it also covers the capsule); the shell view only clips its keys to the rounded shape
+            outlineProvider = object : android.view.ViewOutlineProvider() {
+                override fun getOutline(v: View, outline: android.graphics.Outline) {
+                    outline.setRoundRect(0, 0, v.width, v.height, radius)
+                }
+            }
             clipToOutline = true
         }
         root = r
+        val h = ShellHost(themed).apply {
+            capTop = StripCapsule.headroom(StripFeature.values().size)
+            onOutsideTap = { dismissMenu(true) }
+            addView(r, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM).apply { topMargin = capTop })
+        }
+        host = h
         refraction = ShellRefraction(r, tokens.containerRadius)
         // Keep keys clear of the system navigation bar (fixes overlap on edge-to-edge Android 15+)
         ViewCompat.setOnApplyWindowInsetsListener(r) { _, insets ->
@@ -133,13 +159,34 @@ class PillboardService : InputMethodService() {
         applyBlur()
         watchBlur()
         render()
-        return r
+        return h
+    }
+
+    /**
+     * The headroom above the shell belongs to the window but not to the keyboard: apps lay out above the shell's top
+     * edge, and touches in the headroom fall through to the app, except while the capsule is open (then the whole host
+     * takes them, so a tap outside the capsule closes it).
+     */
+    override fun onComputeInsets(outInsets: InputMethodService.Insets) {
+        super.onComputeInsets(outInsets)
+        val h = host ?: return
+        if (h.height <= 0 || h.visibility != View.VISIBLE) return
+        val loc = IntArray(2); h.getLocationInWindow(loc)
+        val top = loc[1] + h.capTop
+        outInsets.contentTopInsets = top
+        outInsets.visibleTopInsets = top
+        if (h.menuOpen) {
+            outInsets.touchableInsets = InputMethodService.Insets.TOUCHABLE_INSETS_REGION
+            outInsets.touchableRegion.set(loc[0], loc[1], loc[0] + h.width, loc[1] + h.height)
+        }
     }
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
         if (Prefs.dynamic(this) != builtDynamic || Prefs.seedColor(this) != builtSeed || Prefs.bool(this, "glass_fx", true) != builtFx) setInputView(onCreateInputView())
         symbols = false
+        swapAnim?.cancel(); panel = Panel.NONE; selecting = false
+        captureClip()
         emojiMode = false; emojiSearch = false; query.setLength(0)
         stopTranslateState()
         autoCap()
@@ -178,6 +225,7 @@ class PillboardService : InputMethodService() {
             blurListener?.let { (getSystemService(WINDOW_SERVICE) as WindowManager).removeCrossWindowBlurEnabledListener(it) }
         }
         blurListener = null
+        runCatching { getSystemService(android.content.ClipboardManager::class.java).removePrimaryClipChangedListener(clipListener) }
         refraction?.release(); refraction = null
         trExec.shutdownNow()
         Suggestions.save()
@@ -202,11 +250,18 @@ class PillboardService : InputMethodService() {
         // refraction re-samples the shell layer, so it is off for "high contrast text" like the blur
         refraction?.update(Prefs.bool(this, "refract", false) && !highContrast)
         val glass = shell?.also { it.setFill(fill) } ?: tokens.shell(fill).also { shell = it }
-        if (root?.background !== glass) root?.background = glass
+        glass.topPad = host?.capTop ?: 0
+        if (host?.background !== glass) host?.background = glass
         window.window?.let { w ->
-            if (blur) w.setBackgroundDrawable(GradientDrawable().apply {
-                setColor(0x01000000); cornerRadius = tokens.containerRadius
-            }) else w.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            val hv = host
+            if (blur && hv != null) {
+                val mask = ShapeMaskDrawable(glass, hv)
+                glass.onShapeChanged = { mask.invalidateSelf() }
+                w.setBackgroundDrawable(mask)
+            } else {
+                glass.onShapeChanged = null
+                w.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            }
             // Android's window-blur docs: the blur is drawn under the window surface, so the window must be translucent
             if (blur) w.setFormat(PixelFormat.TRANSLUCENT)
             if (Build.VERSION.SDK_INT >= 31) w.setBackgroundBlurRadius(if (blur) tokens.blurRadius else 0)
@@ -216,6 +271,7 @@ class PillboardService : InputMethodService() {
     // ---- layout ----
     private fun render(animateRows: Boolean = false, dir: BlurDir = BlurDir.UP) {
         val r = root ?: return
+        if (menuLayer != null) dismissMenu()
         // labels of the rows above the bottom row (text + any running Blur Replace), kept to animate only what changes
         val oldRows = if (animateRows) (0 until r.childCount).map { r.getChildAt(it) }
             .filter { it !== strip && it !== r.getChildAt(r.childCount - 1) && it is ViewGroup }
@@ -225,6 +281,7 @@ class PillboardService : InputMethodService() {
         else null
         r.removeAllViews()
         letterKeys.clear(); shiftKey = null; pageKey = null
+        if (panel != Panel.NONE) { strip = null; emojiGrid = null; r.addView(if (panel == Panel.CLIPBOARD) buildClipPanel() else buildEditPanel()); return }
         val keyH = keyHeight()
 
         val grid = emojiMode && !emojiSearch
@@ -322,6 +379,225 @@ class PillboardService : InputMethodService() {
 
 
 
+    // ---- panels (clipboard, text editing): the shell's whole content is replaced with Blur Replace ----
+    private enum class Panel { NONE, CLIPBOARD, EDIT }
+    private var panel = Panel.NONE
+    private var panelH = 0
+    private var swapAnim: android.animation.ValueAnimator? = null
+    private val clips = ArrayList<String>()
+    private var clipList: LinearLayout? = null
+    private var selecting = false
+    private var selectKey: KeyView? = null
+    private var copyKey: KeyView? = null
+    private val clipListener = android.content.ClipboardManager.OnPrimaryClipChangedListener { captureClip() }
+
+    /** In: the old content blurs out (up), the panel arrives from blur. Out: the same, the other way (down). */
+    private fun openPanel(p: Panel) {
+        val r = root ?: return
+        panelH = (r.height - r.paddingTop - r.paddingBottom).coerceAtLeast(180.dp)   // the shell keeps its height
+        selecting = false
+        if (p == Panel.CLIPBOARD) captureClip()
+        swapShell(BlurDir.UP) { panel = p; render() }
+    }
+
+    private fun closePanel() = swapShell(BlurDir.DOWN) { panel = Panel.NONE; selecting = false; render() }
+
+    /**
+     * Blur Replace of everything inside the shell: a bitmap of what is shown leaves (blur, fade, drift along [dir]) while
+     * the rebuilt content arrives from blur, on the same out/in timing as the text transition.
+     */
+    private fun swapShell(dir: BlurDir, change: () -> Unit) {
+        val r = root
+        if (r == null || r.width <= 0 || r.height <= 0 || !animationsOn(this)) { change(); return }
+        swapAnim?.cancel()
+        val bmp = android.graphics.Bitmap.createBitmap(r.width, r.height, android.graphics.Bitmap.Config.ARGB_8888)
+        r.draw(android.graphics.Canvas(bmp))
+        val ghost = android.widget.ImageView(themed).apply {
+            setImageBitmap(bmp); scaleType = android.widget.ImageView.ScaleType.FIT_XY
+            layout(0, 0, r.width, r.height)
+        }
+        change()
+        val kids = (0 until r.childCount).map { r.getChildAt(it) }
+        r.overlay.add(ghost)
+        kids.forEach { it.blurFx(1f, dir, 1) }
+        swapAnim = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = BlurTextTokens.TOTAL_MS
+            interpolator = android.view.animation.LinearInterpolator()
+            addUpdateListener {
+                val t = it.animatedFraction * BlurTextTokens.TOTAL_MS
+                ghost.blurFx(BlurTextTokens.outEase.getInterpolation((t / BlurTextTokens.OUT_MS).coerceIn(0f, 1f)), dir, -1)
+                val x = ((t - BlurTextTokens.IN_DELAY_MS) / BlurTextTokens.IN_MS).coerceIn(0f, 1f)
+                val s = 1f - BlurTextTokens.inEase.getInterpolation(x)
+                kids.forEach { v -> v.blurFx(s, dir, 1) }
+            }
+            addListener(object : android.animation.AnimatorListenerAdapter() {     // also runs when cancelled
+                override fun onAnimationEnd(a: android.animation.Animator) {
+                    r.overlay.remove(ghost); bmp.recycle()
+                    kids.forEach { v -> v.blurFx(0f, dir, 1) }
+                    if (swapAnim === a) swapAnim = null
+                }
+            })
+            start()
+        }
+    }
+
+    private fun lp(w: Int, h: Int, weight: Float = 0f) = LinearLayout.LayoutParams(w, h, weight)
+
+    /** Back arrow, title and an optional text action: the panel's own top bar (same footprint as the suggestion strip). */
+    private fun panelBar(title: String, action: String? = null, onAction: () -> Unit = {}) = LinearLayout(themed).apply {
+        orientation = LinearLayout.HORIZONTAL
+        isBaselineAligned = false
+        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 42.dp).apply { setMargins(3.dp, 0, 3.dp, 3.dp) }
+        setPadding(3.dp, 3.dp, 3.dp, 3.dp)
+        val medium = ResourcesCompat.getFont(themed, R.font.gsr_medium)
+        addView(android.widget.ImageView(themed).apply {
+            setImageResource(R.drawable.ic_arrow_back)
+            imageTintList = android.content.res.ColorStateList.valueOf(tokens.keyText)
+            scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+            setPadding(10.dp, 10.dp, 10.dp, 10.dp); imageAlpha = 220
+            contentDescription = "Back"
+            background = tokens.stripItemBackground()
+            setOnClickListener { closePanel() }
+        }, lp(46.dp, MATCH_PARENT))
+        addView(TextView(themed).apply {
+            text = title; textSize = 16f; gravity = Gravity.CENTER_VERTICAL
+            setPadding(8.dp, 0, 8.dp, 0); setTextColor(tokens.keyText)
+            if (medium != null) typeface = medium
+        }, lp(0, MATCH_PARENT, 1f))
+        if (action != null) addView(TextView(themed).apply {
+            text = action; textSize = 14f; gravity = Gravity.CENTER
+            setPadding(14.dp, 0, 14.dp, 0); setTextColor(tokens.keyText)
+            background = tokens.stripItemBackground()
+            setOnClickListener { onAction() }
+        }, lp(WRAP_CONTENT, MATCH_PARENT))
+    }
+
+    // clipboard: Android has no history API, so copies are collected while the keyboard process lives (memory only, never written to disk)
+    private fun captureClip() {
+        runCatching {
+            val c = getSystemService(android.content.ClipboardManager::class.java).primaryClip ?: return
+            if (c.itemCount == 0) return
+            if (Build.VERSION.SDK_INT >= 33 && c.description.extras?.getBoolean("android.content.extra.IS_SENSITIVE") == true) return
+            val t = c.getItemAt(0).coerceToText(this)?.toString()?.takeIf { it.isNotBlank() } ?: return
+            if (clips.firstOrNull() == t) return
+            clips.remove(t); clips.add(0, t)
+            while (clips.size > 20) clips.removeAt(clips.lastIndex)
+            if (panel == Panel.CLIPBOARD) fillClips()
+        }
+    }
+
+    private fun buildClipPanel() = LinearLayout(themed).apply {
+        orientation = LinearLayout.VERTICAL
+        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, panelH)
+        addView(panelBar("Clipboard", "Clear") { clips.clear(); fillClips() })
+        val list = LinearLayout(themed).apply { orientation = LinearLayout.VERTICAL }
+        clipList = list
+        addView(android.widget.ScrollView(themed).apply {
+            isVerticalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER; addView(list)
+        }, lp(MATCH_PARENT, 0, 1f))
+        fillClips()
+    }
+
+    private fun fillClips() {
+        val box = clipList ?: return
+        box.removeAllViews()
+        if (clips.isEmpty()) {
+            box.addView(TextView(themed).apply {
+                text = "Copied text shows up here"; textSize = 14f; gravity = Gravity.CENTER
+                setTextColor(tokens.keyText); alpha = 0.5f
+            }, lp(MATCH_PARENT, 120.dp))
+            return
+        }
+        val rad = Prefs.int(this, "key_r", KbTokens.KEY_R_DEFAULT).dp.toFloat()
+        fun shape(c: Int) = GradientDrawable().apply { setColor(c); cornerRadius = rad }
+        for (t in clips.toList()) box.addView(LinearLayout(themed).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            background = android.graphics.drawable.StateListDrawable().apply {
+                addState(intArrayOf(android.R.attr.state_pressed), shape(tokens.pressed))
+                addState(intArrayOf(), shape(tokens.key))
+            }
+            setOnClickListener {
+                lastFix = null
+                currentInputConnection?.commitText(t, 1)
+                afterEdit()
+                closePanel()
+            }
+            addView(TextView(themed).apply {
+                text = t; textSize = 14.5f; maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END
+                setTextColor(tokens.keyText); setPadding(14.dp, 10.dp, 6.dp, 10.dp)
+            }, lp(0, WRAP_CONTENT, 1f))
+            addView(TextView(themed).apply {
+                text = "\u2715"; textSize = 14f; gravity = Gravity.CENTER; alpha = 0.55f
+                setTextColor(tokens.keyText); contentDescription = "Delete"
+                setOnClickListener { clips.remove(t); fillClips() }
+            }, lp(44.dp, 44.dp))
+        }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { setMargins(3.dp, 0, 3.dp, 6.dp) })
+    }
+
+    // text editing: arrows, Select (arrows then extend the selection), select all / copy / paste, line start / end, backspace
+    private fun LinearLayout.pk(w: Float, label: String, style: KeyStyle = KeyStyle.SPECIAL, repeat: Boolean = false, icon: Int = 0, onKey: () -> Unit): KeyView {
+        val g = Prefs.int(this@PillboardService, "key_gap", 3)
+        return KeyView(themed, label, style, tokens, repeat, icon, onKey).also {
+            it.setHitInset(g.dp, (g + 2).dp)
+            it.glass = shell
+            addView(it, if (orientation == LinearLayout.VERTICAL) lp(MATCH_PARENT, 0, w) else lp(0, MATCH_PARENT, w))
+        }
+    }
+
+    private fun LinearLayout.group(w: Float, vertical: Boolean, build: LinearLayout.() -> Unit) = addView(LinearLayout(themed).apply {
+        orientation = if (vertical) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+        isBaselineAligned = false
+        build()
+    }, if (this.orientation == LinearLayout.VERTICAL) lp(MATCH_PARENT, 0, w) else lp(0, MATCH_PARENT, w))
+
+    private fun buildEditPanel() = LinearLayout(themed).apply {
+        orientation = LinearLayout.VERTICAL
+        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, panelH)
+        addView(panelBar("Text editing"))
+        val body = LinearLayout(themed).apply { orientation = LinearLayout.VERTICAL }
+        addView(body, lp(MATCH_PARENT, 0, 1f))
+        body.group(3f, vertical = false) {
+            pk(1f, "Left", repeat = true, icon = R.drawable.ic_chevron_left) { moveKey(KeyEvent.KEYCODE_DPAD_LEFT) }
+            group(1f, vertical = true) {
+                pk(1f, "Up", repeat = true, icon = R.drawable.ic_chevron_up) { moveKey(KeyEvent.KEYCODE_DPAD_UP) }
+                selectKey = pk(1f, "Select", if (selecting) KeyStyle.ACTIVE else KeyStyle.SPECIAL) {
+                    selecting = !selecting
+                    selectKey?.setKeyStyle(if (selecting) KeyStyle.ACTIVE else KeyStyle.SPECIAL)
+                }
+                pk(1f, "Down", repeat = true, icon = R.drawable.ic_chevron_down) { moveKey(KeyEvent.KEYCODE_DPAD_DOWN) }
+            }
+            pk(1f, "Right", repeat = true, icon = R.drawable.ic_chevron_right) { moveKey(KeyEvent.KEYCODE_DPAD_RIGHT) }
+            group(1f, vertical = true) {
+                pk(1f, "Select all") { editAction(android.R.id.selectAll) }
+                copyKey = pk(1f, "Copy") { editAction(android.R.id.copy); selecting = false; selectKey?.setKeyStyle(KeyStyle.SPECIAL) }
+                pk(1f, "Paste") { lastFix = null; editAction(android.R.id.paste); afterEdit() }
+            }
+        }
+        body.group(1f, vertical = false) {
+            pk(1.5f, "Line start", repeat = true, icon = R.drawable.ic_first_page) { moveKey(KeyEvent.KEYCODE_MOVE_HOME) }
+            pk(1.5f, "Line end", repeat = true, icon = R.drawable.ic_last_page) { moveKey(KeyEvent.KEYCODE_MOVE_END) }
+            pk(1f, "Backspace", repeat = true, icon = R.drawable.ic_backspace) { backspace() }
+        }
+        refreshEdit()
+    }
+
+    /** Arrow / home / end; with Select on, Shift is held so the selection grows instead of the caret moving. */
+    private fun moveKey(code: Int) {
+        val ic = currentInputConnection ?: return
+        val meta = if (selecting) KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON else 0
+        val t = SystemClock.uptimeMillis()
+        ic.sendKeyEvent(KeyEvent(t, t, KeyEvent.ACTION_DOWN, code, 0, meta))
+        ic.sendKeyEvent(KeyEvent(t, t, KeyEvent.ACTION_UP, code, 0, meta))
+        refreshEdit()
+    }
+
+    private fun editAction(id: Int) { currentInputConnection?.performContextMenuAction(id); refreshEdit() }
+
+    /** Copy is dimmed while nothing is selected (the selection updates a moment after the key event). */
+    private fun refreshEdit() = trHandler.postDelayed({
+        if (panel == Panel.EDIT) copyKey?.alpha = if (currentInputConnection?.getSelectedText(0)?.isNotEmpty() == true) 1f else 0.4f
+    }, 60)
+
     // ---- translate mode ----
     private fun trTarget(): String = Prefs.str(this, "tr_target", "").ifEmpty { Languages.defaultTarget(this) }
     private fun sameLang(a: String, b: String) = a.substringBefore('-').equals(b.substringBefore('-'), ignoreCase = true)
@@ -342,6 +618,7 @@ class PillboardService : InputMethodService() {
         trSeq++
         trHandler.removeCallbacks(trDebounce)
         trPopup?.dismiss(); trPopup = null
+        dismissMenu()
     }
 
     /** The whole text of the field being typed in (extracted text first, text around the cursor as a fallback). */
@@ -499,6 +776,188 @@ class PillboardService : InputMethodService() {
         trHandler.postDelayed({ if (trPopup === pop) { pop.dismiss(); trPopup = null } }, 8000)
     }
 
+
+    // ---- strip button (top-right): a feature slot. tap = run it · swipe up/down = switch feature · hold = all features ----
+    private fun View.attachGestures(onLong: (View) -> Unit, onSwipe: (up: Boolean) -> Unit) {
+        val slop = android.view.ViewConfiguration.get(context).scaledTouchSlop
+        val swipeDist = 22.dp
+        var x0 = 0f; var y0 = 0f
+        var moved = false; var done = false
+        val longRun = Runnable {
+            if (done) return@Runnable
+            done = true; isPressed = false
+            performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+            onLong(this)
+        }
+        setOnTouchListener { v, e ->
+            when (e.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    x0 = e.x; y0 = e.y; moved = false; done = false
+                    v.isPressed = true
+                    v.postDelayed(longRun, android.view.ViewConfiguration.getLongPressTimeout().toLong())
+                }
+                android.view.MotionEvent.ACTION_MOVE -> if (!done) {
+                    val dx = e.x - x0; val dy = e.y - y0
+                    if (Math.abs(dx) > slop || Math.abs(dy) > slop) { moved = true; v.removeCallbacks(longRun) }
+                    if (Math.abs(dy) >= swipeDist && Math.abs(dy) > Math.abs(dx)) {   // vertical only
+                        done = true; v.isPressed = false
+                        v.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+                        onSwipe(dy < 0)
+                    }
+                }
+                android.view.MotionEvent.ACTION_UP -> {
+                    v.removeCallbacks(longRun); v.isPressed = false
+                    if (!done && !moved) v.performClick()
+                }
+                android.view.MotionEvent.ACTION_CANCEL -> { v.removeCallbacks(longRun); v.isPressed = false }
+            }
+            true
+        }
+    }
+
+    private fun runFeature(f: StripFeature) = when (f) {
+        StripFeature.TRANSLATE -> startTranslate()
+        StripFeature.CLIPBOARD -> openPanel(Panel.CLIPBOARD)
+        StripFeature.TEXT_EDIT -> openPanel(Panel.EDIT)
+        StripFeature.SETTINGS -> openApp()
+    }
+
+    private fun setFeature(f: StripFeature, dir: BlurDir, animate: Boolean = true) {
+        Prefs.setStr(this, "strip_feature", f.id)
+        stripIcon?.set(f.icon, dir, animate)
+        stripIcon?.contentDescription = f.label
+    }
+
+    /** Swipe up = next feature (icon blurs upward), swipe down = previous (icon blurs downward). */
+    private fun cycleFeature(up: Boolean) {
+        val l = StripFeature.available(this)
+        if (l.size < 2) return
+        val i = l.indexOf(StripFeature.current(this)).coerceAtLeast(0)
+        setFeature(l[(i + if (up) 1 else l.size - 1) % l.size], if (up) BlurDir.UP else BlurDir.DOWN)
+    }
+
+    private fun openApp() {
+        startActivity(android.content.Intent(this, SettingsActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
+    /**
+     * The capsule's right edge reaches the shell edge a little later than it rises (so it never pokes out of the shell's
+     * rounded corner while it is still low), and the icon column follows the capsule's centre so the active icon starts
+     * exactly on the button's icon. [full] is the open capsule and [rest] the button; [begin] where this morph starts.
+     */
+    private fun capsuleTweak(layer: FrameLayout, begin: RoundRectState, rest: RoundRectState, full: RoundRectState): (Float) -> Unit {
+        val opening = begin === rest
+        val col = layer.getChildAt(0)          // the icon column (the layer itself must not move: it is clipped by the contour)
+        val r0 = begin.r; val r1 = if (opening) full.r else rest.r
+        return { f ->
+            val x = ((f - 0.3f) / 0.5f).coerceIn(0f, 1f)
+            val lag = x * x * (3f - 2f * x)
+            menuCur.r = r0 + (r1 - r0) * lag
+            col.translationX = -(full.r - menuCur.r) / 2f
+        }
+    }
+
+    private fun clearMenu() {
+        trHandler.removeCallbacks(menuAutoClose)
+        menuMorph?.cancel(); menuMorph = null
+        menuLayer?.let { host?.removeView(it) }
+        menuLayer = null; menuIcons = emptyList(); menuClosing = false; menuFrom = null; menuTo = null
+        shell?.clearBulge()
+        stripIcon?.alpha = 1f
+        host?.let { it.menuOpen = false; it.requestLayout() }
+    }
+
+    /**
+     * Close the capsule with the morph run backwards from wherever it is: it sinks back into the shell (the neck pinches
+     * off, the contour returns to the plain shell) while its icons blur out.
+     */
+    private fun dismissMenu(animated: Boolean = false) {
+        val layer = menuLayer ?: return
+        val g = shell; val from = menuFrom
+        if (!animated || !animationsOn(this) || g == null || from == null) { clearMenu(); return }
+        if (menuClosing) return
+        menuClosing = true
+        trHandler.removeCallbacks(menuAutoClose)
+        menuMorph?.cancel()
+        menuIcons.drop(1).forEachIndexed { i, v -> v.fadeOut(delay = i * 20L, dir = BlurDir.DOWN) }   // [0] is the active icon: it stays, it IS the button
+        val start = RoundRectState(menuCur.l, menuCur.t, menuCur.r, menuCur.b, menuCur.radius)
+        val to = menuTo ?: from
+        menuMorph = morphBlob(layer, menuOx, menuOy, g, menuCur, start, from, MorphPreset(220L, BlurTextTokens.outEase),
+            tweak = capsuleTweak(layer, start, from, to)) { clearMenu() }
+    }
+
+    /**
+     * Hold on the strip button: the shell itself swells at the button and a capsule grows upward out of it. Shell and
+     * capsule are ONE shape (one SDF contour with a liquid neck, see [GlassSurfaceDrawable]); there is no second window,
+     * no second outline. Bottom = the active feature, which stays exactly where the button's icon is; above it the other
+     * features, on top a "+". The other icons arrive with Blur Replace and leave the same way.
+     */
+    private fun showStripMenu(anchor: View) {
+        dismissMenu()
+        val h0 = host ?: return
+        val g = shell ?: return
+        val feats = StripFeature.available(this)
+        val cur = StripFeature.current(this)
+        val rotated = feats.indexOf(cur).let { i -> feats.drop(i) + feats.take(i) }     // active first
+        val itemH = StripCapsule.ITEM_H.dp
+        val pad = StripCapsule.PAD.dp
+        val w = anchor.width
+        val n = rotated.size + 1
+        val fullH = n * itemH + 2 * pad
+        // column is top -> bottom: "+", then the others, the active feature last (on the button)
+        val col = LinearLayout(themed).apply { orientation = LinearLayout.VERTICAL }
+        val icons = ArrayList<BlurIconView>()        // bottom first
+        val layer = FrameLayout(themed).apply {
+            setPadding(pad, pad, pad, pad)
+            addView(col)
+        }
+        fun cell(res: Int, action: () -> Unit): BlurIconView = BlurIconView(themed, tokens.keyText, 0.9f).apply {
+            background = tokens.stripItemBackground()
+            setOnClickListener { if (!menuClosing) action() }
+            set(res, animate = false)
+        }
+        val plus = cell(R.drawable.ic_add) { dismissMenu(true) }          // add-feature: placeholder, features come later
+        col.addView(plus, LinearLayout.LayoutParams(MATCH_PARENT, itemH))
+        val rest = rotated.drop(1).reversed()
+        val restCells = rest.map { f ->
+            cell(f.icon) { setFeature(f, BlurDir.UP, animate = false); icons.firstOrNull()?.set(f.icon, BlurDir.UP); dismissMenu(true) }
+        }
+        restCells.forEach { col.addView(it, LinearLayout.LayoutParams(MATCH_PARENT, itemH)) }
+        val active = cell(cur.icon) { dismissMenu(true) }
+        col.addView(active, LinearLayout.LayoutParams(MATCH_PARENT, itemH))
+        icons += active; icons += restCells.reversed(); icons += plus
+
+        // everything below is in host (= glass drawable) coordinates
+        val al = IntArray(2); anchor.getLocationInWindow(al)
+        val hl = IntArray(2); h0.getLocationInWindow(hl)
+        val ax = al[0] - hl[0]; val ay = al[1] - hl[1]
+        val bottom = ay + anchor.height / 2 + itemH / 2 + pad          // the active cell is centred on the button
+        val top = (bottom - fullH).coerceAtLeast(0)
+        // the capsule's right side is flush with the shell's right edge (no corner to fill, no curve down the side)
+        val right = h0.width
+        val lw = (right - ax).coerceAtLeast(w)
+        h0.addView(layer, FrameLayout.LayoutParams(lw, bottom - top, Gravity.TOP or Gravity.START).apply { leftMargin = ax; topMargin = top })
+        menuLayer = layer; menuIcons = icons
+        menuOx = ax.toFloat(); menuOy = top.toFloat()
+        val bh = anchor.height.toFloat()
+        // starts as exactly the button's rounded rect (inside the shell: invisible), ends as the whole capsule
+        val from = RoundRectState(ax.toFloat(), ay.toFloat(), (ax + w).toFloat(), ay + bh, bh / 2f)
+        val to = RoundRectState(ax.toFloat(), top.toFloat(), (ax + lw).toFloat(), bottom.toFloat(), lw / 2f)
+        menuFrom = from; menuTo = to
+        h0.menuRect.set(ax - 6.dp, top - 6.dp, ax + lw + 6.dp, bottom + 6.dp)
+        h0.menuOpen = true
+        h0.requestLayout()                       // re-runs onComputeInsets: the headroom now takes touches
+        stripIcon?.alpha = 0f                    // the capsule's active cell is the button's icon now
+        if (animationsOn(this)) {
+            icons.drop(1).forEachIndexed { i, v -> v.fadeIn(delay = 60L + i * 40L, dir = BlurDir.UP) }
+            menuMorph = morphBlob(layer, menuOx, menuOy, g, menuCur, from, to, MorphPresets.container(tokens),
+                tweak = capsuleTweak(layer, from, from, to)) { menuMorph = null }
+        } else {
+            menuCur.lerp(from, to, 1f)
+            g.setBulge(to.l, to.t, to.r, to.b, to.radius)
+        }
+        trHandler.postDelayed(menuAutoClose, 8000)
+    }
 
     // ---- emoji ----
     private fun actionName(): String = when (currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: 0) {
@@ -775,8 +1234,9 @@ class PillboardService : InputMethodService() {
         background = tokens.stripBackground()
         setPadding(3.dp, 3.dp, 3.dp, 3.dp)
         val medium = ResourcesCompat.getFont(themed, R.font.gsr_medium)
+        divAnim?.cancel(); dividersOn = null        // decided by the first updateStrip()
         repeat(3) { i ->
-            if (i > 0) addView(View(themed).apply { setBackgroundColor(tokens.divider) },
+            if (i > 0) addView(View(themed).apply { setBackgroundColor(tokens.divider); blurFx(1f, BlurDir.UP, 1) },
                 LinearLayout.LayoutParams(1.dp, 14.dp).apply { gravity = Gravity.CENTER_VERTICAL })
             addView(BlurTextView(themed).apply {
                 gravity = Gravity.CENTER
@@ -787,19 +1247,19 @@ class PillboardService : InputMethodService() {
                 background = tokens.stripItemBackground()
             }, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
         }
-        if (Prefs.bool(this@PillboardService, "translate", false) && suggestionsAllowed()) {
+        if (suggestionsAllowed()) {
             addView(View(themed).apply { setBackgroundColor(tokens.divider) },
                 LinearLayout.LayoutParams(1.dp, 14.dp).apply { gravity = Gravity.CENTER_VERTICAL })
-            addView(android.widget.ImageView(themed).apply {
-                setImageResource(R.drawable.ic_translate)
-                imageTintList = android.content.res.ColorStateList.valueOf(tokens.keyText)
-                alpha = 0.75f
-                scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
-                setPadding(11.dp, 11.dp, 11.dp, 11.dp)
-                contentDescription = "Translate"
+            val f = StripFeature.current(this@PillboardService)
+            val icon = BlurIconView(themed, tokens.keyText).apply {
+                set(f.icon, animate = false)
+                contentDescription = f.label
                 background = tokens.stripItemBackground()
-                setOnClickListener { startTranslate() }
-            }, LinearLayout.LayoutParams(46.dp, MATCH_PARENT))
+                setOnClickListener { runFeature(StripFeature.current(this@PillboardService)) }
+                attachGestures(onLong = { showStripMenu(it) }, onSwipe = { up -> cycleFeature(up) })
+            }
+            stripIcon = icon
+            addView(icon, LinearLayout.LayoutParams(46.dp, MATCH_PARENT))
         }
     }
 
@@ -834,10 +1294,13 @@ class PillboardService : InputMethodService() {
         val s = strip ?: return
         val c = suggestionCtx()
         val res = if (Prefs.bool(this, "suggest", true)) Suggestions.suggest(c) else null
+        val any = (0 until 3).any { res?.slot(it) != null }
+        // empty field and nothing to suggest: the centre slot carries the name, with no dividers around it
+        val brand = !any && fieldIsEmpty()
         for (i in 0 until 3) {
             val tv = s.getChildAt(i * 2) as BlurTextView
             val cand = res?.slot(i)          // slot 1 (centre) is the lead candidate
-            val nextText = cand?.label ?: ""
+            val nextText = if (brand && i == 1) "Glimkey" else cand?.label ?: ""
             // tv.tag = the text this slot is heading to. Blur Replace sets the text at once and only animates the paint;
             // changes faster than RAPID_GAP_MS (fast typing) snap, so typing never waits on the effect.
             if (tv.tag != nextText) {
@@ -845,6 +1308,39 @@ class PillboardService : InputMethodService() {
                 tv.setTextBlur(nextText, minGapMs = BlurTextTokens.RAPID_GAP_MS)
             }
             tv.setOnClickListener(if (cand == null) null else View.OnClickListener { applySuggestion(c, cand) })
+        }
+        val mid = s.getChildAt(2)
+        val a = if (brand) 0.55f else 1f
+        if (mid.alpha != a) mid.animate().alpha(a).setDuration(BlurTextTokens.TOTAL_MS).start()
+        setDividers(s, any)
+    }
+
+    private var dividersOn: Boolean? = null
+    private var divAnim: android.animation.ValueAnimator? = null
+
+    private fun fieldIsEmpty(): Boolean {
+        val ic = currentInputConnection ?: return false
+        return ic.getTextBeforeCursor(1, 0).isNullOrEmpty() && ic.getTextAfterCursor(1, 0).isNullOrEmpty()
+    }
+
+    /** The two dividers between the suggestion slots: Blur Replace in when suggestions appear, out when they go (same timing as the text). */
+    private fun setDividers(s: LinearLayout, on: Boolean) {
+        val first = dividersOn == null
+        if (dividersOn == on) return
+        dividersOn = on
+        val ds = listOf(s.getChildAt(1), s.getChildAt(3))
+        divAnim?.cancel()
+        val to = if (on) 0f else 1f
+        if (first || !animationsOn(this) || !s.isLaidOut) { ds.forEach { it.blurFx(to, BlurDir.UP, 1) }; return }
+        val start = 1f - Math.sqrt(ds[0].alpha.coerceIn(0f, 1f).toDouble()).toFloat()     // continue from where an interrupted run is
+        val dir = if (on) BlurDir.UP else BlurDir.DOWN
+        val sign = if (on) 1 else -1
+        divAnim = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = if (on) BlurTextTokens.IN_MS else BlurTextTokens.OUT_MS
+            startDelay = if (on) BlurTextTokens.IN_DELAY_MS else 0L        // after the words, like the text's own arrival
+            interpolator = if (on) BlurTextTokens.inEase else BlurTextTokens.outEase
+            addUpdateListener { anim -> val v1 = start + (to - start) * (anim.animatedValue as Float); ds.forEach { d -> d.blurFx(v1, dir, sign) } }
+            start()
         }
     }
 

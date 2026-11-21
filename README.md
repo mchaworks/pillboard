@@ -12,6 +12,7 @@ An open-source Android keyboard with a rounded, Gboard-style layout:
 - No globe key: language switching stays with Android's own navigation-bar switcher
 - Action key adapts (go / search / send / done / next) and shows a matching icon
 - 123 symbols layer
+- Strip button features (hold for the capsule, swipe to switch): Translate, Clipboard, Text editing, Settings. Clipboard and Text editing replace the whole keyboard with Blur Replace and go back the same way reversed
 - Suggestions that learn: word bar, next-word prediction and typo-aware auto-correct, with Indonesian and English active at once. The language is inferred from what you type, never from system locales or a setting; learned words stay on the device (Settings > Typing / Advanced)
 
 ## Build
