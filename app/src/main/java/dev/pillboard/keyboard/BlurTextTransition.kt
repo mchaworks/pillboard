@@ -122,20 +122,21 @@ open class BlurTextView(context: Context) : TextView(context) {
     /**
      * Set [next] now (input never waits) and play Blur Replace from the current label (or [from]).
      * Changes closer than [minGapMs] to the previous one snap instead (typing responsiveness first); animations
-     * switched off in system settings also snap. [inherited] carries a running transition over from a replaced view.
+     * switched off in system settings also snap. Returns true only when a transition really started. [inherited] carries a running transition over from a replaced view.
      */
-    internal fun setTextBlur(next: CharSequence, from: CharSequence? = null, minGapMs: Long = 0L, inherited: List<BlurTextLayer>? = null) {
+    internal fun setTextBlur(next: CharSequence, from: CharSequence? = null, minGapMs: Long = 0L, inherited: List<BlurTextLayer>? = null): Boolean {
         val prev = text
-        if (from == null && inherited == null && prev.contentEquals(next)) return     // unchanged: nothing to animate
+        if (from == null && inherited == null && prev.contentEquals(next)) return false     // unchanged: nothing to animate
         val now = SystemClock.uptimeMillis()
         val rapid = minGapMs > 0L && now - lastChangeAt < minGapMs
         lastChangeAt = now
-        if (!animationsOn(context) || rapid) { blur?.cancel(); setText(next); return }
+        if (!animationsOn(context) || rapid) { blur?.cancel(); setText(next); return false }
         val t = blur ?: BlurTextTransition(this).also { blur = it }
         inChange = true
         setText(next)
         inChange = false
         t.change(next, from ?: prev, inherited)
+        return true
     }
 
     /** State of a running transition, to hand to a replacement view's [setTextBlur]. */

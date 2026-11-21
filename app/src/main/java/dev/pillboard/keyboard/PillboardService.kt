@@ -190,7 +190,7 @@ class PillboardService : InputMethodService() {
         val oldRows = if (animateRows) (0 until r.childCount).map { r.getChildAt(it) }
             .filter { it !== strip && it !== r.getChildAt(r.childCount - 1) }
             .map { row -> (row as ViewGroup).children.filterIsInstance<KeyView>().filter { it.text.length == 1 }
-                .map { it.text.toString() to it.blurSnapshot() }.toList() }
+                .map { OldKey(it.text.toString(), it.blurSnapshot(), it.visualW, it.visualH) }.toList() }
         else null
         r.removeAllViews()
         letterKeys.clear(); shiftKey = null; pageKey = null
@@ -221,9 +221,11 @@ class PillboardService : InputMethodService() {
                 // snapshot first: render() rebuilds the row, and a transition still running on the old key carries over
                 val from = if (symbols) "ABC" else "123"
                 val running = pageKey?.blurSnapshot()
+                val oldW = pageKey?.visualW ?: 0
+                val oldH = pageKey?.visualH ?: 0
                 symbols = !symbols
                 render(animateRows = true)    // the new label is already in place; Blur Replace only changes what is painted
-                pageKey?.setTextBlur(if (symbols) "ABC" else "123", from = from, inherited = running)
+                pageKey?.morphLabel(if (symbols) "ABC" else "123", from = from, inherited = running, oldW = oldW, oldH = oldH)
             }
             key(",", keyH, 0.85f, KeyStyle.SPECIAL) { type(",") }
             key("space", keyH, 4.45f, KeyStyle.SPECIAL) { space() }.also { sp ->
@@ -256,8 +258,13 @@ class PillboardService : InputMethodService() {
                 for (k in (rows[ri] as ViewGroup).children.filterIsInstance<KeyView>()) {
                     if (k.text.length != 1) continue
                     val o = old?.getOrNull(ki++)
-                    if (o != null && o.second == null && o.first == k.text.toString()) continue    // unchanged: stays still
-                    k.setLabelBlur(k.text.toString(), from = o?.first ?: "", inherited = o?.second)
+                    val same = o != null && o.snap == null && o.text == k.text.toString()
+                    if (same) {
+                        // same character: only a genuinely different key size animates (its body), the text stays still
+                        if (kotlin.math.abs(o!!.w - k.width) > 1 || kotlin.math.abs(o.h - k.height) > 1) k.startShapeMorph(o.w, o.h)
+                        continue
+                    }
+                    k.morphLabel(k.text.toString(), from = o?.text ?: "", inherited = o?.snap, oldW = o?.w ?: 0, oldH = o?.h ?: 0)
                 }
             }
         }
@@ -336,11 +343,12 @@ class PillboardService : InputMethodService() {
         letterKeys.forEach {
             val l = it.text.toString()
             // only keys whose label really changes animate (ON <-> LOCK keeps the same capitals); fast typing snaps
-            it.setLabelBlur(if (shift != Shift.OFF) l.uppercase() else l.lowercase(), minGapMs = BlurTextTokens.RAPID_GAP_MS)
+            it.morphLabel(if (shift != Shift.OFF) l.uppercase() else l.lowercase(), minGapMs = BlurTextTokens.RAPID_GAP_MS)
         }
         shiftKey?.let {
             it.setIcon(shiftIcon(), shiftDesc())
             it.setKeyStyle(shiftStyle())
+            it.startShapeMorph()       // the Shift key itself changes state: its body flexes with the corner/tone spring
         }
     }
 
@@ -495,3 +503,6 @@ class PillboardService : InputMethodService() {
         updateStrip()
     }
 }
+
+/** What the rebuild needs from a key of the previous page: its character, a running Blur Replace and its visual size. */
+private class OldKey(val text: String, val snap: List<BlurTextLayer>?, val w: Int, val h: Int)

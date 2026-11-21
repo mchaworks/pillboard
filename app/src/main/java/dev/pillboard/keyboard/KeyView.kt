@@ -176,7 +176,7 @@ class KeyView(
     private val downColors = IntArray(2)
     private var morph: ValueAnimator? = null
     private val argb = ArgbEvaluator()
-    private val shape = GradientDrawable()
+    private val shape = KeyBodyDrawable()
     // organic shape: four independent corner radii (TL, TR, BR, BL); the GradientDrawable only ever sees `radii`
     private val corner = FloatArray(4)
     private val cFrom = FloatArray(4)
@@ -328,6 +328,7 @@ class KeyView(
      * tap that lands between two keys still types one (fast thumbs no longer drop letters).
      */
     fun setHitInset(x: Int, y: Int) {
+        shape.limitX = x.toFloat(); shape.limitY = y.toFloat()
         background = android.graphics.drawable.InsetDrawable(shape, x, y, x, y)
     }
 
@@ -335,10 +336,72 @@ class KeyView(
     fun setKeyStyle(style: KeyStyle) = applyStyle(style, animate = true)
     fun setLabel(l: String) { text = l; contentDescription = l }
 
-    /** Dynamic label (Shift case, layout page): Blur Replace if it really changes; touch handling is untouched. */
-    internal fun setLabelBlur(l: String, from: CharSequence? = null, minGapMs: Long = 0L, inherited: List<BlurTextLayer>? = null) {
+    /**
+     * Dynamic label (Shift case, layout page): Blur Replace of the character AND an organic morph of the keycap body on
+     * one shared timeline ([BlurTextTokens.TOTAL_MS]). [oldW]/[oldH] = the visual size of the key this one replaces (a
+     * new page can give the key another width); the body grows/shrinks from it. Nothing happens when the label does
+     * not change, or when the change snaps (fast typing, animations off). Touch handling is untouched.
+     */
+    internal fun morphLabel(l: String, from: CharSequence? = null, minGapMs: Long = 0L,
+                            inherited: List<BlurTextLayer>? = null, oldW: Int = 0, oldH: Int = 0) {
         contentDescription = l
-        setTextBlur(l, from, minGapMs, inherited)
+        if (setTextBlur(l, from, minGapMs, inherited)) startShapeMorph(oldW, oldH)
+    }
+
+    // ---- keycap shape morph: one clock, extras of the body (size around its centre) + Bezier bulge ----
+    private var shapeClock: ValueAnimator? = null
+    private var shapeStart = -1L
+    private var shapeDW0 = 0f
+    private var shapeDH0 = 0f
+    private var oldVisW = 0
+    private var oldVisH = 0
+
+    /** Visual size of the cell including a running size morph (carried to the replacement key on rapid changes). */
+    internal val visualW get() = width + shape.dW.toInt()
+    internal val visualH get() = height + shape.dH.toInt()
+
+    internal fun startShapeMorph(oldW: Int = 0, oldH: Int = 0) {
+        if (!motionOn) return
+        val running = shapeClock?.isRunning == true && shapeStart >= 0L
+        if (running) {                                  // interrupted: continue from the shape on screen
+            shapeDW0 = shape.dW; shapeDH0 = shape.dH
+            shapeStart = android.os.SystemClock.uptimeMillis()
+        } else {
+            oldVisW = oldW; oldVisH = oldH
+            shapeStart = -1L
+        }
+        if (shapeClock?.isRunning == true) return
+        shapeClock = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 1000L
+            repeatCount = ValueAnimator.INFINITE
+            addUpdateListener { shapeTick() }
+            start()
+        }
+    }
+
+    private fun shapeTick() {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (shapeStart < 0L) {
+            if (width <= 0) return                      // not laid out yet: the text waits for the same moment
+            shapeStart = now
+            shapeDW0 = if (oldVisW > 0) (oldVisW - width).toFloat() else 0f
+            shapeDH0 = if (oldVisH > 0) (oldVisH - height).toFloat() else 0f
+            if (kotlin.math.abs(shapeDW0) < 1.5f) shapeDW0 = 0f
+            if (kotlin.math.abs(shapeDH0) < 1.5f) shapeDH0 = 0f
+        }
+        val p = ((now - shapeStart).toFloat() / BlurTextTokens.TOTAL_MS).coerceIn(0f, 1f)
+        val e = 1f - BlurTextTokens.inEase.getInterpolation(p)                       // size settles early, softly
+        val bulge = kotlin.math.sin(Math.PI * Math.pow(p.toDouble(), 0.8)).toFloat()   // peaks while the label swaps
+        shape.setMorph(shapeDW0 * e, shapeDH0 * e, if (p >= 1f) 0f else bulge)
+        invalidate()
+        if (p >= 1f) stopShapeMorph()
+    }
+
+    private fun stopShapeMorph() {
+        shapeClock?.cancel(); shapeClock = null
+        shapeStart = -1L
+        shape.setMorph(0f, 0f, 0f)
+        invalidate()
     }
 
     /** Show a vector icon instead of text; [desc] is the accessibility label. */
@@ -524,6 +587,7 @@ class KeyView(
     }
 
     override fun onDetachedFromWindow() {
+        stopShapeMorph()
         removeCallbacks(repeater); removeCallbacks(longPress)
         dismissAlts()
         preview?.hide(this)

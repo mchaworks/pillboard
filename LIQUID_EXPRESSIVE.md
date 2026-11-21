@@ -197,3 +197,13 @@ Files (flat, main package): `BlurTextTokens` (blur dp, durations, scale, drift, 
 ## Keycap Blur Replace (zip 19)
 
 `KeyView.setLabelBlur` = `setTextBlur` on keycaps. Shift: `updateShiftUi` relabels only keys whose case really changes (ON <-> LOCK changes nothing), changes closer than `RAPID_GAP_MS` snap. 123 <-> ABC: `render(animateRows = true)` captures the old rows' single-character labels (+ any running transition), rows stay still (the old row fade/slide was replaced), and each key whose label differs animates old -> new; keys with no old counterpart blur in, unchanged keys are skipped. Rows are matched from the bottom, keys by position. Ordinary keypresses, backspace repeat, icons and the bottom row are never routed through it. Language switching: no language feature exists yet; the same call (only changed labels) applies when one is added.
+
+## Organic keycap shape + text morph (zip 20)
+
+`KeyBodyDrawable.kt` replaces the keycap's `GradientDrawable` (same colours / four corner radii API, so press, Shift and release code is unchanged). Organic mode: face size changes around its centre (`dW`/`dH`, only when the key's size really differs on the new page) plus `bulge` (0..1): the four edges become cubic Beziers (top swells and leans, sides pinch, bottom sags; `MorphTokens.KEY_BULGE_*`), corners stay circular arcs. At rest it is a plain rounded rect. One Path + one Paint, no bitmaps.
+
+`KeyView.morphLabel` = Blur Replace of the character + shape morph on one timeline (`BlurTextTokens.TOTAL_MS`): bulge peaks (~p 0.42) while the label swaps, size settles early on the arrival ease, both end together. Both only run when `setTextBlur` really started a transition (so unchanged keys, fast typing and animations-off do nothing). The two parts are independent: `startShapeMorph` (geometry only) and `setTextBlur` (text only) can be used alone. Interrupted: the key keeps its current size/bulge on a rapid Shift; across a page rebuild the replaced key's visual size (`visualW/H`) and running Blur Replace are carried over (bulge restarts from 0).
+
+Used by: Shift (letters whose case changes + the Shift key body), 123/ABC page key, and every key of a page switch whose character changes; a key with the same character but another width (e.g. weights differ) morphs its body only. Rows are matched from the bottom, keys by position.
+
+Bug fixed (zip 20): Blur Replace text sat a few px above the real text and dropped when the transition ended. The renderer centred with ascent/descent while TextView uses font top/bottom; it now uses `TextView.getBaseline()`, so the last frame equals the native text.

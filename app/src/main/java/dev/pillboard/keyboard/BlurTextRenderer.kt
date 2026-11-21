@@ -85,9 +85,15 @@ internal class BlurTextRenderer(private val density: Float) {
             Gravity.RIGHT -> left + avail - tw
             else -> left + (avail - tw) / 2f
         }
-        val top = host.compoundPaddingTop.toFloat()
-        val bottom = (h - host.compoundPaddingBottom).toFloat()
-        val y = (top + bottom) / 2f - (fm.ascent + fm.descent) / 2f
+        // the TextView's own baseline (gravity, font padding included), so the last frame is pixel-identical to the
+        // native text and nothing jumps when the transition hands over
+        val bl = host.baseline
+        val y = if (bl >= 0) bl.toFloat() else {
+            val top = host.compoundPaddingTop.toFloat()
+            val bottom = (h - host.compoundPaddingBottom).toFloat()
+            if (host.includeFontPadding) (top + bottom) / 2f - (fm.top + fm.bottom) / 2f
+            else (top + bottom) / 2f - (fm.ascent + fm.descent) / 2f
+        }
 
         val scale = 1f - (1f - BlurTextTokens.SCALE_MIN) * s
         val ty = l.sign * BlurTextTokens.SHIFT_DP * density * s

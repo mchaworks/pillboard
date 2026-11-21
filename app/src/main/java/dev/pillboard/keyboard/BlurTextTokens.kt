@@ -12,6 +12,7 @@ internal object BlurTextTokens {
     const val SCALE_MIN = 0.90f       // scale of fully blurred text (old shrinks into it, new settles out of it)
     const val SHIFT_DP = 2f           // small vertical drift: old drifts up, new rises from below
     const val RAPID_GAP_MS = 160L     // changes closer than this (fast typing) snap instead of animating
+    const val TOTAL_MS = IN_DELAY_MS + IN_MS   // whole text transition; the keycap shape morph runs on the same length
     const val MAX_OUTGOING = 2        // old labels kept alive during rapid changes
 
     // fast start so the old text leaves immediately; emphasized decelerate so the new text lands softly
