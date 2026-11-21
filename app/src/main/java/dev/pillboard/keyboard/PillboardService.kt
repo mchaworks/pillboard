@@ -225,6 +225,7 @@ class PillboardService : InputMethodService() {
             blurListener?.let { (getSystemService(WINDOW_SERVICE) as WindowManager).removeCrossWindowBlurEnabledListener(it) }
         }
         blurListener = null
+        trHandler.removeCallbacks(clipExpire); trHandler.removeCallbacks(stripRefresh)
         runCatching { getSystemService(android.content.ClipboardManager::class.java).removePrimaryClipChangedListener(clipListener) }
         refraction?.release(); refraction = null
         trExec.shutdownNow()
@@ -509,13 +510,93 @@ class PillboardService : InputMethodService() {
         runCatching {
             val c = getSystemService(android.content.ClipboardManager::class.java).primaryClip ?: return
             if (c.itemCount == 0) return
-            if (Build.VERSION.SDK_INT >= 33 && c.description.extras?.getBoolean("android.content.extra.IS_SENSITIVE") == true) return
+            if (Build.VERSION.SDK_INT >= 33 && c.description.extras?.getBoolean("android.content.extra.IS_SENSITIVE") == true) {
+                clipTimeMs = 0L          // a sensitive copy (password manager) is never offered on the strip
+                return
+            }
             val t = c.getItemAt(0).coerceToText(this)?.toString()?.takeIf { it.isNotBlank() } ?: return
-            if (clips.firstOrNull() == t) return
-            clips.remove(t); clips.add(0, t)
-            while (clips.size > 20) clips.removeAt(clips.lastIndex)
-            if (panel == Panel.CLIPBOARD) fillClips()
+            // when this clip was copied: a copy made before the keyboard opened still counts as fresh
+            val ts = c.description.timestamp.takeIf { it > 0L } ?: System.currentTimeMillis()
+            if (ts != clipTimeMs) { clipTimeMs = ts; clipDismissed = null }    // a new copy (even of the same text) is offered again
+            if (clips.firstOrNull() != t) {
+                clips.remove(t); clips.add(0, t)
+                while (clips.size > 20) clips.removeAt(clips.lastIndex)
+                if (panel == Panel.CLIPBOARD) fillClips()
+            }
+            trHandler.post { updateStrip() }
         }
+    }
+
+    // ---- clipboard chip on the suggestion strip (like Gboard): a fresh copy can be pasted with one tap ----
+    private val clipFreshMs = 60_000L            // empty field: offered for a minute
+    private val clipFreshTypingMs = 20_000L      // field with text: only briefly, the predictions matter more
+    private var clipTimeMs = 0L                  // when the current primary clip was copied (0 = nothing to offer)
+    private var clipDismissed: String? = null    // pasted already: not offered again until copied anew
+    private var clipLayoutOn = false
+    private var lastStripKey: String? = null
+    private val clipExpire = Runnable { updateStrip() }
+    private val stripRefresh = Runnable { if (panel == Panel.NONE) refreshStripIfStale() }
+
+    private fun freshClip(maxAgeMs: Long): String? {
+        val t = clips.firstOrNull() ?: return null
+        if (t == clipDismissed || clipTimeMs <= 0L) return null
+        return if (System.currentTimeMillis() - clipTimeMs <= maxAgeMs) t else null
+    }
+
+    private fun clipPreview(t: String) = t.replace(Regex("\\s+"), " ").trim().take(80)
+
+    private fun pasteClip(t: String) {
+        lastFix = null
+        currentInputConnection?.commitText(t, 1)
+        clipDismissed = t
+        afterEdit()
+    }
+
+    /** Never put a copied text on the strip in a password field. */
+    private fun isPasswordField(): Boolean {
+        val t = currentInputEditorInfo?.inputType ?: return false
+        val v = t and InputType.TYPE_MASK_VARIATION
+        return when (t and InputType.TYPE_MASK_CLASS) {
+            InputType.TYPE_CLASS_TEXT -> v == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
+                v == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD || v == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD
+            InputType.TYPE_CLASS_NUMBER -> v == InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            else -> false
+        }
+    }
+
+    /** While the chip shows, the centre slot takes the whole strip (the side slots collapse) and carries a clipboard icon. */
+    private fun setClipChipLayout(s: LinearLayout, on: Boolean) {
+        if (clipLayoutOn == on) return
+        clipLayoutOn = on
+        for (i in intArrayOf(0, 2)) (s.getChildAt(i * 2).layoutParams as LinearLayout.LayoutParams).weight = if (on) 0f else 1f
+        val tv = s.getChildAt(2) as TextView
+        if (on) {
+            val d = androidx.core.content.ContextCompat.getDrawable(themed, R.drawable.ic_clipboard)?.mutate()?.apply {
+                setBounds(0, 0, 18.dp, 18.dp); setTint(tokens.keyText); alpha = 190
+            }
+            tv.setCompoundDrawablesRelative(d, null, null, null)
+            tv.compoundDrawablePadding = 8.dp
+            tv.ellipsize = android.text.TextUtils.TruncateAt.END
+        } else {
+            tv.setCompoundDrawablesRelative(null, null, null, null)
+            tv.ellipsize = null
+        }
+        s.requestLayout()
+    }
+
+    private fun stripKey(): String {
+        val ic = currentInputConnection ?: return "-"
+        return "${ic.getTextBeforeCursor(120, 0)}\u0001${ic.getTextAfterCursor(1, 0)}\u0001${ic.getSelectedText(0)?.length ?: 0}"
+    }
+
+    private fun refreshStripIfStale() { if (stripKey() != lastStripKey) updateStrip() }
+
+    /** The field changed under us (the app cleared it after Send, select-all, a tap that moved the caret): the strip must follow. */
+    override fun onUpdateSelection(oldSelStart: Int, oldSelEnd: Int, newSelStart: Int, newSelEnd: Int, candidatesStart: Int, candidatesEnd: Int) {
+        super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
+        if (oldSelStart == newSelStart && oldSelEnd == newSelEnd) return
+        trHandler.removeCallbacks(stripRefresh)
+        trHandler.post(stripRefresh)
     }
 
     private fun buildClipPanel() = LinearLayout(themed).apply {
@@ -551,6 +632,7 @@ class PillboardService : InputMethodService() {
             setOnClickListener {
                 lastFix = null
                 currentInputConnection?.commitText(t, 1)
+                clipDismissed = t
                 afterEdit()
                 closePanel()
             }
@@ -1292,6 +1374,7 @@ class PillboardService : InputMethodService() {
         setPadding(3.dp, 3.dp, 3.dp, 3.dp)
         val medium = ResourcesCompat.getFont(themed, R.font.gsr_medium)
         divAnim?.cancel(); dividersOn = null        // decided by the first updateStrip()
+        clipLayoutOn = false; lastStripKey = null
         repeat(3) { i ->
             if (i > 0) addView(View(themed).apply { setBackgroundColor(tokens.divider); blurFx(1f, BlurDir.UP, 1) },
                 LinearLayout.LayoutParams(1.dp, 14.dp).apply { gravity = Gravity.CENTER_VERTICAL })
@@ -1349,17 +1432,27 @@ class PillboardService : InputMethodService() {
         if (emojiMode) { if (emojiSearch) updateSearchBar(); return }
         if (translateMode) return
         val s = strip ?: return
+        lastStripKey = stripKey()
         val c = suggestionCtx()
         // empty field: the centre slot carries the name with no dividers, whatever the engine would offer (start-of-sentence words)
-        val brand = fieldIsEmpty() || !suggestionsAllowed()      // terminals, passwords, numbers: just the name and the dot widget
-        val res = if (!brand && Prefs.bool(this, "suggest", true)) Suggestions.suggest(c) else null
+        val empty = fieldIsEmpty()
+        val brand = empty || !suggestionsAllowed()      // terminals, passwords, numbers: just the name and the dot widget
+        // a fresh copy takes the whole strip (like Gboard) until the person starts a word, pastes it, or it gets old
+        val maxAge = if (empty) clipFreshMs else clipFreshTypingMs
+        val clip = if (c.word.isEmpty() && !isPasswordField()) freshClip(maxAge) else null
+        val res = if (clip == null && !brand && Prefs.bool(this, "suggest", true)) Suggestions.suggest(c) else null
         val any = (0 until 3).any { res?.slot(it) != null }
+        setClipChipLayout(s, clip != null)
         for (i in 0 until 3) {
             val tv = s.getChildAt(i * 2) as BlurTextView
             val cand = res?.slot(i)          // slot 1 (centre) is the lead candidate
-            val nextText = if (brand && i == 1) "Glimkey" else cand?.label ?: ""
-            if (i == 1) {       // the name is bold, the lead candidate medium
-                val f = if (brand) ResourcesCompat.getFont(themed, R.font.gsr_bold) else ResourcesCompat.getFont(themed, R.font.gsr_medium)
+            val nextText = when {
+                clip != null -> if (i == 1) clipPreview(clip) else ""
+                brand && i == 1 -> "Glimkey"
+                else -> cand?.label ?: ""
+            }
+            if (i == 1) {       // the name is bold, the lead candidate and the copied text medium
+                val f = if (brand && clip == null) ResourcesCompat.getFont(themed, R.font.gsr_bold) else ResourcesCompat.getFont(themed, R.font.gsr_medium)
                 if (f != null && tv.typeface !== f) tv.typeface = f
             }
             // tv.tag = the text this slot is heading to. Blur Replace sets the text at once and only animates the paint;
@@ -1368,17 +1461,29 @@ class PillboardService : InputMethodService() {
                 tv.tag = nextText
                 tv.setTextBlur(nextText, minGapMs = BlurTextTokens.RAPID_GAP_MS)
             }
-            tv.setOnClickListener(if (cand == null) null else View.OnClickListener { applySuggestion(c, cand) })
+            val action: View.OnClickListener? = when {
+                clip != null && i == 1 -> View.OnClickListener { pasteClip(clip) }
+                cand != null -> View.OnClickListener { applySuggestion(c, cand) }
+                else -> null
+            }
+            tv.setOnClickListener(action)
+            tv.isClickable = action != null      // setOnClickListener(null) would leave the name pressable
         }
         setDividers(s, any)
+        trHandler.removeCallbacks(clipExpire)
+        if (clip != null) trHandler.postDelayed(clipExpire, (maxAge - (System.currentTimeMillis() - clipTimeMs)).coerceAtLeast(0L) + 50L)
     }
 
     private var dividersOn: Boolean? = null
     private var divAnim: android.animation.ValueAnimator? = null
 
+    /** Empty = nothing before, after or selected. An unknown answer (null) is never "empty", and a select-all is not empty. */
     private fun fieldIsEmpty(): Boolean {
         val ic = currentInputConnection ?: return false
-        return ic.getTextBeforeCursor(1, 0).isNullOrEmpty() && ic.getTextAfterCursor(1, 0).isNullOrEmpty()
+        val before = ic.getTextBeforeCursor(1, 0) ?: return false
+        val after = ic.getTextAfterCursor(1, 0) ?: return false
+        if (before.isNotEmpty() || after.isNotEmpty()) return false
+        return ic.getSelectedText(0).isNullOrEmpty()
     }
 
     /** The two dividers between the suggestion slots: Blur Replace in when suggestions appear, out when they go (same timing as the text). */
