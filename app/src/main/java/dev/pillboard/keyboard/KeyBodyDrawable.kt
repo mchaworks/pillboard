@@ -29,6 +29,10 @@ internal class KeyBodyDrawable : Drawable() {
     private var alphaMul = 255
     private var shaderFor = 0L
 
+    private companion object {
+        const val ORGANIC_EDGES = MorphTokens.KEY_BULGE_TOP + MorphTokens.KEY_BULGE_SIDE + MorphTokens.KEY_BULGE_BOTTOM + MorphTokens.KEY_BULGE_LEAN
+    }
+
     var dW = 0f; private set
     var dH = 0f; private set
     var bulge = 0f; private set
@@ -50,8 +54,11 @@ internal class KeyBodyDrawable : Drawable() {
         if (bd.isEmpty) return
         val cx = bd.exactCenterX()
         val cy = bd.exactCenterY()
-        val w = (bd.width() + dW.coerceIn(-2f * limitX - bd.width(), 2f * limitX)).coerceAtLeast(2f)
-        val h = (bd.height() + dH.coerceIn(-2f * limitY - bd.height(), 2f * limitY)).coerceAtLeast(2f)
+        var w = (bd.width() + dW.coerceIn(-2f * limitX - bd.width(), 2f * limitX)).coerceAtLeast(2f)
+        var h = (bd.height() + dH.coerceIn(-2f * limitY - bd.height(), 2f * limitY)).coerceAtLeast(2f)
+        val sq = bulge * MorphTokens.KEY_SQUASH            // soft squash: a touch wider and shorter, edges stay straight
+        w = minOf(w * (1f + sq), bd.width() + 2f * limitX)
+        h *= (1f - sq)
         rect.set(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f)
 
         if (c0 == c1) { paint.shader = null; paint.color = c0 }
@@ -63,7 +70,7 @@ internal class KeyBodyDrawable : Drawable() {
 
         val maxR = minOf(w, h) / 2f
         path.reset()
-        if (bulge <= 0.002f) {
+        if (bulge <= 0.002f || ORGANIC_EDGES == 0f) {
             for (i in 0 until 8) radii[i] = radii[i].coerceIn(0f, maxR)
             path.addRoundRect(rect, radii, Path.Direction.CW)
         } else organic(rect, minOf(radii[0], maxR), minOf(radii[2], maxR), minOf(radii[4], maxR), minOf(radii[6], maxR), bulge)

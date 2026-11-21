@@ -207,3 +207,5 @@ Files (flat, main package): `BlurTextTokens` (blur dp, durations, scale, drift, 
 Used by: Shift (letters whose case changes + the Shift key body), 123/ABC page key, and every key of a page switch whose character changes; a key with the same character but another width (e.g. weights differ) morphs its body only. Rows are matched from the bottom, keys by position.
 
 Bug fixed (zip 20): Blur Replace text sat a few px above the real text and dropped when the transition ended. The renderer centred with ascent/descent while TextView uses font top/bottom; it now uses `TextView.getBaseline()`, so the last frame equals the native text.
+
+Update (zip 22): the edge bulge (top/bottom swelling) looked bad and is OFF (`KEY_BULGE_*` = 0). The morph is now size change + a soft squash (`KEY_SQUASH`, wider/shorter by 4% at the peak) with straight edges and rounded corners; the Bezier edge code stays for experiments.
