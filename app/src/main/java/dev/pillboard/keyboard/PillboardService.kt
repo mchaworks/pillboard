@@ -256,8 +256,10 @@ class PillboardService : InputMethodService() {
             val hv = host
             if (blur && hv != null) {
                 val mask = ShapeMaskDrawable(glass, hv)
-                glass.onShapeChanged = { mask.invalidateSelf() }
+                glass.onShapeChanged = { mask.invalidateSelf(); w.decorView.invalidateOutline() }
                 w.setBackgroundDrawable(mask)
+                w.decorView.invalidateOutline()
+                hv.post { w.decorView.invalidateOutline() }   // host position is known only after layout
             } else {
                 glass.onShapeChanged = null
                 w.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))

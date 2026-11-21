@@ -11,6 +11,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.os.Build
 import android.graphics.drawable.Drawable
 import android.view.MotionEvent
 import android.view.View
@@ -91,6 +92,19 @@ internal class ShapeMaskDrawable(private val glass: GlassSurfaceDrawable, privat
         canvas.translate(loc[0].toFloat(), loc[1].toFloat())
         canvas.drawPath(path, paint)
         canvas.restoreToCount(save)
+    }
+
+    /**
+     * The window blur is clipped by the decor view's outline, which comes from the background drawable's outline, not
+     * from what [draw] paints. Without this the outline is empty and the blur is a full rectangle behind rounded glass.
+     */
+    override fun getOutline(outline: Outline) {
+        host.getLocationInWindow(loc)
+        glass.maskPath(path)
+        val p = Path(path)
+        p.offset(loc[0].toFloat(), loc[1].toFloat())
+        if (Build.VERSION.SDK_INT >= 30) outline.setPath(p) else outline.setEmpty()
+        outline.alpha = 1f
     }
 
     override fun setAlpha(alpha: Int) {}
