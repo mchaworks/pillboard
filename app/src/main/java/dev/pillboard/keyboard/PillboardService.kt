@@ -89,6 +89,21 @@ class PillboardService : InputMethodService() {
     private var searchLabel: TextView? = null
     private var searchScroll: android.widget.HorizontalScrollView? = null
     private var searchResults: LinearLayout? = null
+    // translate mode: the strip becomes a live translation of the whole field; tap it to replace the field's text
+    private enum class TrState { IDLE, LOADING, OK, ERROR }
+    private var translateMode = false
+    private var trState = TrState.IDLE
+    private var trText: String? = null        // last good translation
+    private var trMsg = ""                    // hint / error line
+    private var trSrc: String? = null         // detected source language
+    private var trShown: String = "en"        // target actually used for trText
+    private var trSeq = 0                     // newest request wins
+    private var trChip: TextView? = null
+    private var trResult: TextView? = null
+    private var trPopup: PopupWindow? = null
+    private val trHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val trDebounce = Runnable { requestTranslate() }
+    private val trExec = java.util.concurrent.Executors.newSingleThreadExecutor()
     /** One glass drawable per built input view: its AGSL layer and light animation are reused across applyBlur() calls. */
     private var shell: GlassSurfaceDrawable? = null
     /** Stage 4: edge refraction of the shell layer (API 33+, "Liquid refraction" setting). */
@@ -128,6 +143,7 @@ class PillboardService : InputMethodService() {
         if (Prefs.dynamic(this) != builtDynamic || Prefs.seedColor(this) != builtSeed || Prefs.bool(this, "glass_fx", true) != builtFx) setInputView(onCreateInputView())
         symbols = false
         emojiMode = false; emojiSearch = false; query.setLength(0)
+        stopTranslateState()
         autoCap()
         applyBlur()
         render()
@@ -137,6 +153,7 @@ class PillboardService : InputMethodService() {
     override fun onFinishInputView(finishingInput: Boolean) {
         preview?.dismiss(immediate = true)
         emojiGrid?.dismissTones()
+        stopTranslateState()
         super.onFinishInputView(finishingInput)
     }
 
@@ -163,6 +180,7 @@ class PillboardService : InputMethodService() {
         }
         blurListener = null
         refraction?.release(); refraction = null
+        trExec.shutdownNow()
         super.onDestroy()
     }
 
@@ -214,7 +232,8 @@ class PillboardService : InputMethodService() {
         strip = when {
             emojiMode && emojiSearch -> buildSearchBar().also { r.addView(it) }
             grid -> buildEmojiTabs().also { r.addView(it) }
-            Prefs.bool(this, "suggest", true) && suggestionsAllowed() -> buildStrip().also { r.addView(it) }
+            translateMode -> buildTranslateBar().also { r.addView(it) }
+            (Prefs.bool(this, "suggest", true) || Prefs.bool(this, "translate", false)) && suggestionsAllowed() -> buildStrip().also { r.addView(it) }
             else -> null
         }
 
@@ -230,15 +249,16 @@ class PillboardService : InputMethodService() {
                 key("Backspace", keyH, 1.5f, KeyStyle.SPECIAL, repeat = true, icon = R.drawable.ic_backspace) { backspace() }
             })
         } else {
+            val emojiOn = Prefs.bool(this, "emoji", true)
             r.addView(rowOf { chars("1234567890", keyH) })
             r.addView(rowOf { chars("-/:;()$&@\"", keyH) })
             r.addView(rowOf {
-                gap(1.5f)
+                // the slot the Shift key holds on the letter page: the emoji key (otherwise it would sit empty)
+                if (emojiOn) key("Emoji", keyH, 1.5f, KeyStyle.SPECIAL, icon = R.drawable.ic_emoji) { setEmoji(true) } else gap(1.5f)
                 chars(".,?!'", keyH, 1.4f)
                 key("Backspace", keyH, 1.5f, KeyStyle.SPECIAL, repeat = true, icon = R.drawable.ic_backspace) { backspace() }
             })
         }
-        val emojiOn = Prefs.bool(this, "emoji", true)
         if (grid) r.addView(emojiBottomRow(keyH)) else r.addView(rowOf {
             pageKey = key(if (symbols) "ABC" else "123", keyH, 1.35f, KeyStyle.SPECIAL) {
                 // snapshot first: render() rebuilds the row, and a transition still running on the old key carries over
@@ -247,13 +267,12 @@ class PillboardService : InputMethodService() {
                 val oldW = pageKey?.visualW ?: 0
                 val oldH = pageKey?.visualH ?: 0
                 symbols = !symbols
-                val dir = if (symbols) BlurDir.RIGHT else BlurDir.LEFT     // 123 slides forward, ABC slides back
+                val dir = if (symbols) BlurDir.UP else BlurDir.DOWN         // same vertical language as Shift: 123 rises, ABC settles
                 render(animateRows = true, dir = dir)    // the new label is already in place; Blur Replace only changes what is painted
                 pageKey?.morphLabel(if (symbols) "ABC" else "123", from = from, inherited = running, oldW = oldW, oldH = oldH, dir = dir)
             }
-            if (emojiOn) key("Emoji", keyH, 1f, KeyStyle.SPECIAL, icon = R.drawable.ic_emoji) { setEmoji(true) }
             key(",", keyH, 0.85f, KeyStyle.SPECIAL) { type(",") }
-            key("space", keyH, if (emojiOn) 3.45f else 4.45f, KeyStyle.SPECIAL) { space() }.also { sp ->
+            key("space", keyH, 4.45f, KeyStyle.SPECIAL) { space() }.also { sp ->
                 if (Prefs.bool(this@PillboardService, "spaceslide", true)) {
                     sp.onSlide = { n -> moveCursor(n) }
                     sp.onSlideState = { on -> letterKeys.forEach { it.animate().alpha(if (on) 0.35f else 1f).setDuration(120).start() } }
@@ -302,6 +321,185 @@ class PillboardService : InputMethodService() {
     }
 
 
+
+    // ---- translate mode ----
+    private fun trTarget(): String = Prefs.str(this, "tr_target", "").ifEmpty { Languages.defaultTarget(this) }
+    private fun sameLang(a: String, b: String) = a.substringBefore('-').equals(b.substringBefore('-'), ignoreCase = true)
+
+    private fun startTranslate() {
+        if (!Prefs.bool(this, "translate", false)) return
+        translateMode = true
+        trState = TrState.IDLE; trText = null; trSrc = null; trMsg = ""
+        render()
+        requestTranslate()
+    }
+
+    private fun stopTranslate() { stopTranslateState(); render() }
+
+    /** State only (no rebuild): used when the keyboard is torn down or another panel takes over the strip. */
+    private fun stopTranslateState() {
+        translateMode = false
+        trSeq++
+        trHandler.removeCallbacks(trDebounce)
+        trPopup?.dismiss(); trPopup = null
+    }
+
+    /** The whole text of the field being typed in (extracted text first, text around the cursor as a fallback). */
+    private fun fieldText(): String {
+        val ic = currentInputConnection ?: return ""
+        val ex = ic.getExtractedText(android.view.inputmethod.ExtractedTextRequest(), 0)?.text?.toString()
+        if (!ex.isNullOrEmpty()) return ex
+        return (ic.getTextBeforeCursor(1500, 0)?.toString().orEmpty()) + (ic.getTextAfterCursor(500, 0)?.toString().orEmpty())
+    }
+
+    private fun requestTranslate() {
+        if (!translateMode) return
+        val text = fieldText().trim()
+        if (text.isEmpty()) {
+            trSeq++
+            trState = TrState.IDLE; trText = null; trMsg = "Type something to translate"
+            updateTranslateBar(); return
+        }
+        trState = TrState.LOADING
+        updateTranslateBar()
+        val seq = ++trSeq
+        val target = trTarget()
+        trExec.execute {
+            val outcome = runCatching {
+                var tgt = target
+                var r = Translator.translate(this, text, tgt)
+                // already written in the target language: translate to English instead of echoing it back
+                val det = r.detected
+                if (det != null && sameLang(det, tgt) && !sameLang("en", tgt)) {
+                    tgt = "en"; r = Translator.translate(this, text, tgt)
+                }
+                Triple(r.text, r.detected, tgt)
+            }
+            trHandler.post {
+                if (seq != trSeq || !translateMode) return@post
+                outcome.onSuccess { (out, det, tgt) ->
+                    trText = out; trSrc = det; trShown = tgt; trState = TrState.OK
+                }.onFailure { e ->
+                    trState = TrState.ERROR
+                    trMsg = when (e) {
+                        is java.net.UnknownHostException, is java.net.SocketTimeoutException, is java.net.ConnectException -> "No connection"
+                        else -> e.message?.takeIf { it.length < 60 } ?: "Couldn't translate"
+                    }
+                }
+                updateTranslateBar()
+            }
+        }
+    }
+
+    /** Replace the field's text with the translation, then go back to the normal word bar. */
+    private fun applyTranslation() {
+        val out = trText ?: return
+        val ic = currentInputConnection ?: return
+        val len = fieldText().length
+        ic.beginBatchEdit()
+        ic.setSelection(0, len)
+        ic.commitText(out, 1)
+        ic.endBatchEdit()
+        lastFix = null
+        stopTranslate()
+        afterEdit()
+    }
+
+    private fun buildTranslateBar() = LinearLayout(themed).apply {
+        orientation = LinearLayout.HORIZONTAL
+        isBaselineAligned = false
+        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 42.dp).apply { setMargins(3.dp, 0, 3.dp, 3.dp) }
+        background = tokens.stripBackground()
+        setPadding(3.dp, 3.dp, 3.dp, 3.dp)
+        val medium = ResourcesCompat.getFont(themed, R.font.gsr_medium)
+        addView(TextView(themed).apply {
+            text = "\u2715"; textSize = 16f; gravity = Gravity.CENTER
+            setTextColor(tokens.keyText); alpha = 0.7f
+            contentDescription = "Close translate"
+            background = tokens.stripItemBackground()
+            setOnClickListener { stopTranslate() }
+        }, LinearLayout.LayoutParams(40.dp, MATCH_PARENT))
+        val chip = TextView(themed).apply {
+            textSize = 13f; gravity = Gravity.CENTER; maxLines = 1
+            setPadding(10.dp, 0, 10.dp, 0)
+            setTextColor(tokens.keyText)
+            if (medium != null) typeface = medium
+            contentDescription = "Target language"
+            background = tokens.stripItemBackground()
+            setOnClickListener { showLangPicker(this) }
+        }
+        trChip = chip
+        addView(chip, LinearLayout.LayoutParams(WRAP_CONTENT, MATCH_PARENT))
+        addView(View(themed).apply { setBackgroundColor(tokens.divider) },
+            LinearLayout.LayoutParams(1.dp, 14.dp).apply { gravity = Gravity.CENTER_VERTICAL })
+        val res = TextView(themed).apply {
+            textSize = 14.5f; maxLines = 2; gravity = Gravity.CENTER_VERTICAL
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setPadding(10.dp, 0, 10.dp, 0)
+            setTextColor(tokens.keyText)
+            background = tokens.stripItemBackground()
+            setOnClickListener { applyTranslation() }
+        }
+        trResult = res
+        addView(res, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
+        updateTranslateBar()
+    }
+
+    private fun updateTranslateBar() {
+        val chip = trChip ?: return
+        val res = trResult ?: return
+        val target = if (trState == TrState.OK) trShown else trTarget()
+        chip.text = "${(trSrc ?: "auto").uppercase()} \u2192 ${target.uppercase()} \u25BE"
+        when {
+            trState == TrState.OK && trText != null -> { res.text = trText; res.alpha = 1f; res.contentDescription = "Replace text with translation" }
+            trState == TrState.LOADING -> { res.text = trText ?: "Translating\u2026"; res.alpha = 0.5f }
+            else -> { res.text = trMsg.ifEmpty { "Type something to translate" }; res.alpha = 0.55f }
+        }
+    }
+
+    /** Target language list above the bar; system languages first. */
+    private fun showLangPicker(anchor: View) {
+        trPopup?.dismiss()
+        val langs = Languages.ordered(this)
+        val cur = trTarget()
+        val col = LinearLayout(themed).apply { orientation = LinearLayout.VERTICAL }
+        val sv = android.widget.ScrollView(themed).apply { isVerticalScrollBarEnabled = false; addView(col) }
+        val itemH = 44.dp
+        val w = 232.dp
+        val h = 7 * itemH + 12.dp
+        val box = FrameLayout(themed).apply {
+            background = tokens.popupBackground(); elevation = tokens.popupElevation
+            setPadding(6.dp, 6.dp, 6.dp, 6.dp)
+            addView(sv)
+        }
+        val pop = PopupWindow(box, w, h, false).apply { isOutsideTouchable = true }
+        langs.forEach { l ->
+            col.addView(TextView(themed).apply {
+                text = if (l.code == cur) l.name + "   \u2713" else l.name
+                textSize = 16f; gravity = Gravity.CENTER_VERTICAL; maxLines = 1
+                setPadding(14.dp, 0, 14.dp, 0)
+                setTextColor(tokens.keyText)
+                background = tokens.stripItemBackground()
+                setOnClickListener {
+                    Prefs.setStr(this@PillboardService, "tr_target", l.code)
+                    pop.dismiss(); trPopup = null
+                    trText = null
+                    requestTranslate()
+                }
+            }, LinearLayout.LayoutParams(MATCH_PARENT, itemH))
+        }
+        trPopup = pop
+        val loc = IntArray(2); anchor.getLocationOnScreen(loc)
+        val win = IntArray(2); anchor.getLocationInWindow(win)
+        val ox = loc[0] - win[0]; val oy = loc[1] - win[1]
+        val screenW = resources.displayMetrics.widthPixels
+        val x = loc[0].coerceIn(4.dp, (screenW - w - 4.dp).coerceAtLeast(4.dp))
+        val y = (loc[1] - h - 4.dp).coerceAtLeast(0)
+        pop.showAtLocation(anchor, Gravity.NO_GRAVITY, x - ox, y - oy)
+        trHandler.postDelayed({ if (trPopup === pop) { pop.dismiss(); trPopup = null } }, 8000)
+    }
+
+
     // ---- emoji ----
     private fun actionName(): String = when (currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: 0) {
         EditorInfo.IME_ACTION_GO -> "Go"
@@ -315,6 +513,7 @@ class PillboardService : InputMethodService() {
     /** Open/close the emoji panel. The panel settles in on the shared smooth ease (no spring). */
     private fun setEmoji(on: Boolean) {
         emojiGrid?.dismissTones()
+        stopTranslateState()
         emojiMode = on; emojiSearch = false; query.setLength(0)
         if (on) emojiCat = if (EmojiData.recents(this).isEmpty()) 1 else 0
         symbols = false
@@ -552,8 +751,8 @@ class PillboardService : InputMethodService() {
                 dir = if (shift != Shift.OFF) BlurDir.UP else BlurDir.DOWN)     // capitals rise, lowercase settles down
         }
         shiftKey?.let {
+            it.setKeyStyle(shiftStyle())      // tone, corners and glyph ink flow together on the smooth timeline
             it.setIcon(shiftIcon(), shiftDesc())
-            it.setKeyStyle(shiftStyle())      // tone and corners flow on the smooth timeline (no spring)
         }
     }
 
@@ -588,6 +787,20 @@ class PillboardService : InputMethodService() {
                 background = tokens.stripItemBackground()
             }, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
         }
+        if (Prefs.bool(this@PillboardService, "translate", false) && suggestionsAllowed()) {
+            addView(View(themed).apply { setBackgroundColor(tokens.divider) },
+                LinearLayout.LayoutParams(1.dp, 14.dp).apply { gravity = Gravity.CENTER_VERTICAL })
+            addView(android.widget.ImageView(themed).apply {
+                setImageResource(R.drawable.ic_translate)
+                imageTintList = android.content.res.ColorStateList.valueOf(tokens.keyText)
+                alpha = 0.75f
+                scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+                setPadding(11.dp, 11.dp, 11.dp, 11.dp)
+                contentDescription = "Translate"
+                background = tokens.stripItemBackground()
+                setOnClickListener { startTranslate() }
+            }, LinearLayout.LayoutParams(46.dp, MATCH_PARENT))
+        }
     }
 
     private fun currentWord(): String {
@@ -597,9 +810,10 @@ class PillboardService : InputMethodService() {
 
     private fun updateStrip() {
         if (emojiMode) { if (emojiSearch) updateSearchBar(); return }
+        if (translateMode) return
         val s = strip ?: return
         val word = currentWord()
-        val list = Suggestions.forPrefix(word)
+        val list = if (Prefs.bool(this, "suggest", true)) Suggestions.forPrefix(word) else emptyList()
         for (i in 0 until 3) {
             val tv = s.getChildAt(i * 2) as BlurTextView
             val sug = list.getOrNull(i)
@@ -713,6 +927,7 @@ class PillboardService : InputMethodService() {
         autoCap()
         if (prev != shift) updateShiftUi()
         updateStrip()
+        if (translateMode) { trHandler.removeCallbacks(trDebounce); trHandler.postDelayed(trDebounce, 550) }
     }
 }
 

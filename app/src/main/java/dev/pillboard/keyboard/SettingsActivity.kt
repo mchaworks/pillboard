@@ -4,7 +4,10 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
-import android.graphics.drawable.GradientDrawable
+import android.content.res.ColorStateList
+import android.graphics.drawable.ColorDrawable
+import android.widget.ImageView
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -24,14 +27,15 @@ import androidx.core.view.WindowInsetsCompat
 /** Home + subpages (Typing, Appearance, Feedback, Advanced, About) with search. One activity, in-place navigation. */
 class SettingsActivity : Activity() {
 
-    private enum class Page(val label: String, val sub: String) {
+    private enum class Page(val label: String, val sub: String, val icon: Int = 0, val tile: Int = 0) {
         HOME("Pillboard", ""),
-        TYPING("Typing", "Suggestions, auto-correction, capitalization"),
-        APPEARANCE("Appearance", "Colors, shape, spacing, height"),
-        LAYOUT("Layout", "Number row, emoji key"),
-        FEEDBACK("Feedback", "Haptics"),
-        ADVANCED("Advanced", "Reset settings, emoji history"),
-        ABOUT("About", "Version and license"),
+        TYPING("Typing", "Suggestions, auto-correction, capitalization", R.drawable.ic_set_typing, 0xFF0A84FF.toInt()),
+        TRANSLATE("Translation", "Online translate, target language", R.drawable.ic_translate, 0xFF32ADE6.toInt()),
+        APPEARANCE("Appearance", "Colors, shape, spacing, height", R.drawable.ic_set_look, 0xFFBF5AF2.toInt()),
+        LAYOUT("Layout", "Number row, emoji key", R.drawable.ic_set_layout, 0xFFFF9F0A.toInt()),
+        FEEDBACK("Feedback", "Haptics", R.drawable.ic_set_feedback, 0xFF30B650.toInt()),
+        ADVANCED("Advanced", "Reset settings, emoji history", R.drawable.ic_set_more, 0xFF8E8E93.toInt()),
+        ABOUT("About", "Version and license", R.drawable.ic_set_info, 0xFF5AB8E8.toInt()),
     }
 
     /** Single source of truth: pages and search both render from this list. */
@@ -67,8 +71,23 @@ class SettingsActivity : Activity() {
             Item(Page.TYPING, "Double-space period", "dot full stop") { ui.toggle("Double-space period", "Tap space twice to insert a period", "dblspace", true) },
             Item(Page.TYPING, "Auto-correction", "fix typos undo") { ui.toggle("Auto-correction", "Fix common typos on space, backspace undoes", "autocorrect", true) },
             Item(Page.TYPING, "Space bar cursor", "slide swipe cursor move space") { ui.toggle("Space bar cursor", "Slide on the space bar to move the cursor", "spaceslide", true) },
+            Item(Page.TRANSLATE, "Translation", "translate online language word bar") {
+                ui.toggle("Translation", "Adds a translate button to the word bar. While translate mode is open, the text of the field you are typing in is sent to the service chosen below. Never used in password fields.", "translate", false) { renderBody() }
+            },
+            Item(Page.TRANSLATE, "Service", "translate provider google mymemory libre online") {
+                ui.link("Service", Translator.provider(this).label, chevron = false) { pickProvider() }
+            },
+            Item(Page.TRANSLATE, "Target language", "translate language target default system") {
+                ui.link("Target language", Languages.nameOf(this, targetCode()), chevron = false) { pickTarget() }
+            },
+            Item(Page.TRANSLATE, "Server URL", "translate libre server url host", visible = { Translator.provider(this) == Translator.Provider.LIBRE }) {
+                ui.link("Server URL", Prefs.str(this, "tr_url", "").ifEmpty { "Not set" }, chevron = false) { editText("Server URL", "tr_url", false) }
+            },
+            Item(Page.TRANSLATE, "API key", "translate libre key token", visible = { Translator.provider(this) == Translator.Provider.LIBRE }) {
+                ui.link("API key", if (Prefs.str(this, "tr_key", "").isEmpty()) "Optional" else "Set", chevron = false) { editText("API key", "tr_key", true) }
+            },
             Item(Page.LAYOUT, "Number row", "digits numbers top") { ui.toggle("Number row", "Show 1–0 above the letters", "numrow", false) },
-            Item(Page.LAYOUT, "Emoji key", "emoji smiley picker button") { ui.toggle("Emoji key", "Emoji button next to 123", "emoji", true) },
+            Item(Page.LAYOUT, "Emoji key", "emoji smiley picker button") { ui.toggle("Emoji key", "Emoji button on the 123 page", "emoji", true) },
             Item(Page.ADVANCED, "Clear recent emoji", "emoji recent history forget") { ui.link("Clear recent emoji", "Forget the emoji you used lately", chevron = false) { EmojiData.clearRecents(this) } },
             Item(Page.APPEARANCE, "Material You colors", "dynamic wallpaper theme") {
                 ui.toggle("Material You colors",
@@ -144,7 +163,11 @@ class SettingsActivity : Activity() {
             setPadding(16.dp, 24.dp, 16.dp, 32.dp)
         }
         scroll = ScrollView(this).apply { addView(col) }
+        scroll.setBackgroundColor(ui.pageBg)
+        scroll.isVerticalScrollBarEnabled = false
+        window.setBackgroundDrawable(ColorDrawable(ui.pageBg))
         setContentView(scroll)
+        WindowCompat.getInsetsController(window, scroll).apply { isAppearanceLightStatusBars = !ui.night; isAppearanceLightNavigationBars = !ui.night }
         // Edge-to-edge (targetSdk 35): pad by real system bar insets, and by the keyboard (IME) when open,
         // otherwise the "Test typing" field ends up hidden behind the keyboard.
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -183,26 +206,40 @@ class SettingsActivity : Activity() {
         status?.text = when { active -> "●  Active"; enabled -> "●  Enabled"; else -> "●  Not enabled" }
     }
 
-    private fun go(p: Page) { page = p; query = ""; renderPage(); scroll.scrollTo(0, 0) }
+    private fun go(p: Page) {
+        val forward = p != Page.HOME
+        page = p; query = ""; renderPage(); scroll.scrollTo(0, 0)
+        settle(forward)
+    }
+
+    /** Page change: the new page glides in from the side it belongs to (right = deeper, left = back) on the smooth ease. */
+    private fun settle(forward: Boolean) {
+        if (!animationsOn(this)) return
+        val d = (if (forward) 28 else -28).dp.toFloat()
+        for (v in listOf<View>(top, body)) {
+            v.alpha = 0f; v.translationX = d
+            v.animate().alpha(1f).translationX(0f).setDuration(300).setInterpolator(BlurTextTokens.outEase).start()
+        }
+    }
 
     // ---- rendering ----
     private fun renderPage() {
         top.removeAllViews()
         status = null
         if (page == Page.HOME) {
-            top.addView(ui.title("Pillboard"))
-            top.addView(ui.caption("Your keyboard, your style.").apply { setPadding(0, 2.dp, 0, 12.dp) })
+            top.addView(ui.title("Pillboard", 36f))
+            top.addView(ui.caption("Your keyboard, your style.").apply { setPadding(2.dp, 2.dp, 0, 16.dp) })
             val st = ui.badge().also { status = it }
-            top.addView(LinearLayout(this).apply {
+            top.addView(ui.card(LinearLayout(this).apply {
                 gravity = Gravity.CENTER_VERTICAL
                 addView(st)
                 addView(View(context), LinearLayout.LayoutParams(0, 1, 1f))
                 addView(ui.button("Enable", false, compact = true) { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) },
-                    LinearLayout.LayoutParams(-2, 36.dp).apply { marginEnd = 6.dp })
+                    LinearLayout.LayoutParams(-2, 40.dp).apply { marginEnd = 8.dp })
                 addView(ui.button("Switch", true, compact = true) {
                     (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker()
-                }, LinearLayout.LayoutParams(-2, 36.dp))
-            }, ui.lp(bottom = 12.dp))
+                }, LinearLayout.LayoutParams(-2, 40.dp))
+            }, h = 14.dp, v = 12.dp), ui.lp(bottom = 14.dp))
             top.addView(ui.searchField("Search settings").apply {
                 setText(query); setSelection(query.length)
                 addTextChangedListener(object : TextWatcher {
@@ -213,14 +250,20 @@ class SettingsActivity : Activity() {
             }, ui.lp())
             updateStatus()
         } else {
+            // iOS: accent-colored back chevron + parent name, then the large title
             top.addView(LinearLayout(this).apply {
                 gravity = Gravity.CENTER_VERTICAL
-                addView(android.widget.TextView(context).apply {
-                    text = "‹"; textSize = 32f; setTextColor(ui.onSurface); setPadding(4.dp, 0, 16.dp, 4.dp)
-                    contentDescription = "Back"; setOnClickListener { go(Page.HOME) }
-                })
-                addView(ui.title(page.label, 24f))
-            })
+                minimumHeight = 44.dp
+                setPadding(0, 0, 24.dp, 0)
+                contentDescription = "Back"
+                addView(ImageView(context).apply {
+                    setImageResource(R.drawable.ic_chevron_right); rotation = 180f
+                    imageTintList = ColorStateList.valueOf(ui.primary)
+                }, LinearLayout.LayoutParams(24.dp, 24.dp).apply { marginStart = (-6).dp })
+                addView(android.widget.TextView(context).apply { text = "Pillboard"; textSize = 17f; setTextColor(ui.primary) })
+                setOnClickListener { go(Page.HOME) }
+            }, LinearLayout.LayoutParams(-2, -2))
+            top.addView(ui.title(page.label, 32f).apply { setPadding(2.dp, 4.dp, 0, 4.dp) })
         }
         renderBody()
     }
@@ -233,6 +276,10 @@ class SettingsActivity : Activity() {
             else -> {
                 if (page == Page.APPEARANCE) addPreview()
                 body.addView(ui.box(items.filter { it.page == page && it.visible() }.map { it.make() }), ui.lp())
+                if (page == Page.TRANSLATE) body.addView(ui.caption(
+                    "Off by default. When it is on, text is sent over the internet only while translate mode is open, to the service you pick. " +
+                    "Google uses an unofficial public endpoint that can change or stop working without notice; MyMemory has a small free daily limit; " +
+                    "LibreTranslate needs your own server.").apply { textSize = 13f; setPadding(20.dp, 4.dp, 20.dp, 0) })
             }
         }
     }
@@ -257,21 +304,54 @@ class SettingsActivity : Activity() {
     private fun home() {
         addPreview()
         body.addView(LinearLayout(this).apply {
-            addView(ui.button("Customize", false) { go(Page.APPEARANCE) }, LinearLayout.LayoutParams(0, 44.dp, 1f).apply { marginEnd = 4.dp })
+            addView(ui.button("Customize", false) { go(Page.APPEARANCE) }, LinearLayout.LayoutParams(0, 48.dp, 1f).apply { marginEnd = 5.dp })
             addView(ui.button("Test typing", true) { scroll.smoothScrollTo(0, (tryHeader?.top ?: 0) + this@SettingsActivity.top.height); focusTest() },
-                LinearLayout.LayoutParams(0, 44.dp, 1f).apply { marginStart = 4.dp })
+                LinearLayout.LayoutParams(0, 48.dp, 1f).apply { marginStart = 5.dp })
         }, ui.lp())
         body.addView(ui.section("Settings"))
-        body.addView(ui.box(listOf(Page.TYPING, Page.APPEARANCE, Page.LAYOUT, Page.FEEDBACK).map { p -> ui.link(p.label, p.sub) { go(p) } }), ui.lp())
+        body.addView(ui.box(listOf(Page.TYPING, Page.TRANSLATE, Page.APPEARANCE, Page.LAYOUT, Page.FEEDBACK)
+            .map { p -> ui.link(p.label, p.sub, icon = p.icon, tile = p.tile) { go(p) } }, inset = ui.tileInset), ui.lp())
         tryHeader = ui.section("Try it").also { body.addView(it) }
         val (wrap, input) = ui.testField(); testInput = input
         body.addView(ui.box(listOf(wrap)), ui.lp())
         body.addView(ui.section("More"))
-        body.addView(ui.box(listOf(Page.ADVANCED, Page.ABOUT).map { p -> ui.link(p.label, p.sub) { go(p) } }), ui.lp())
+        body.addView(ui.box(listOf(Page.ADVANCED, Page.ABOUT)
+            .map { p -> ui.link(p.label, p.sub, icon = p.icon, tile = p.tile) { go(p) } }, inset = ui.tileInset), ui.lp())
+    }
+
+    private fun targetCode() = Prefs.str(this, "tr_target", "").ifEmpty { Languages.defaultTarget(this) }
+
+    private fun pickProvider() {
+        val ps = Translator.Provider.values()
+        MaterialAlertDialogBuilder(this).setTitle("Translation service")
+            .setSingleChoiceItems(ps.map { it.label }.toTypedArray(), ps.indexOf(Translator.provider(this))) { d, i ->
+                Prefs.setStr(this, "tr_provider", ps[i].id); d.dismiss(); renderBody()
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun pickTarget() {
+        val ls = Languages.ordered(this)
+        MaterialAlertDialogBuilder(this).setTitle("Target language")
+            .setSingleChoiceItems(ls.map { it.name }.toTypedArray(), ls.indexOfFirst { it.code == targetCode() }) { d, i ->
+                Prefs.setStr(this, "tr_target", ls[i].code); d.dismiss(); renderBody()
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun editText(title: String, key: String, secret: Boolean) {
+        val input = EditText(this).apply {
+            setText(Prefs.str(this@SettingsActivity, key, "")); setSingleLine()
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                if (secret) android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD else android.text.InputType.TYPE_TEXT_VARIATION_URI
+            hint = if (secret) "Optional" else "https://your-server.example"
+        }
+        val wrap = android.widget.FrameLayout(this).apply { setPadding(24.dp, 8.dp, 24.dp, 0); addView(input) }
+        MaterialAlertDialogBuilder(this).setTitle(title).setView(wrap)
+            .setPositiveButton("Save") { _, _ -> Prefs.setStr(this, key, input.text.toString().trim()); renderBody() }
+            .setNegativeButton("Cancel", null).show()
     }
 
     private fun confirmReset() {
-        val d = AlertDialog.Builder(this)
+        val d = MaterialAlertDialogBuilder(this)
             .setTitle("Reset all keyboard settings?")
             .setMessage("Themes, layout and preferences will return to their defaults.")
             .setPositiveButton("Reset") { _, _ -> Prefs.clear(this); go(Page.HOME); recreate() }

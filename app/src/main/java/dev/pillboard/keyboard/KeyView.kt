@@ -216,6 +216,7 @@ class KeyView(
 
     private fun applyStyle(style: KeyStyle, animate: Boolean = false) {
         val oldColors = restColors
+        val oldInk = ink
         System.arraycopy(corner, 0, cFrom, 0, 4)
         currentStyle = style
         when (style) {
@@ -244,7 +245,7 @@ class KeyView(
         setCorners(rest)
         setTextColor(ink)
         icon?.setTint(ink)
-        if (animate && motionOn && isAttachedToWindow && width > 0) morphFrom(oldColors)
+        if (animate && motionOn && isAttachedToWindow && width > 0) morphFrom(oldColors, oldInk)
         invalidate()
     }
 
@@ -265,10 +266,14 @@ class KeyView(
      * spring instead of snapping. Colour is clamped to 0..1 (the spring overshoots; ArgbEvaluator would overflow
      * the channels), corners are allowed to overshoot, which is what makes the shape feel alive.
      */
-    private fun morphFrom(oldColors: IntArray) {
+    private fun morphFrom(oldColors: IntArray, oldInk: Int) {
         val newColors = restColors
+        val newInk = ink
         shape.setColors(oldColors)
         setCorners(cFrom[0], cFrom[1], cFrom[2], cFrom[3])
+        // the glyph starts in the OLD ink (it sits on the old body colour) and flows to the new one together with the body,
+        // so an icon can never be invisible against a body that has not changed colour yet
+        icon?.setTint(oldInk); setTextColor(oldInk)
         morph = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = BlurTextTokens.TOTAL_MS        // same smooth timeline as the label: no spring, no overshoot
             interpolator = BlurTextTokens.inEase
@@ -280,7 +285,18 @@ class KeyView(
                     argb.evaluate(fc, oldColors[1], newColors[1]) as Int))
                 for (i in 0..3) corner[i] = cFrom[i] + (rest - cFrom[i]) * f
                 applyCorners()
+                val inkNow = argb.evaluate(fc, oldInk, newInk) as Int
+                icon?.setTint(inkNow); setTextColor(inkNow)
             }
+            // whichever way it stops (finished or cancelled by a touch / the next style change) the key lands on its final look
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                private fun land() {
+                    shape.setColors(restColors); setCorners(rest)
+                    icon?.setTint(ink); setTextColor(ink)
+                }
+                override fun onAnimationEnd(a: android.animation.Animator) = land()
+                override fun onAnimationCancel(a: android.animation.Animator) = land()
+            })
             start()
         }
     }
